@@ -66,12 +66,12 @@ $Global:MyOSDCloud = [ordered]@{
     RecoveryPartition     = [bool]$true     # Create WinRE recovery partition
     OEMActivation         = [bool]$True     # Use BIOS-embedded product key if present
     WindowsUpdate         = [bool]$true     # Install Windows Updates via SetupComplete
-    WindowsUpdateDrivers  = [bool]$true     # Install driver updates via Windows Update
+    WindowsUpdateDrivers  = [bool]$false    # Install driver updates via Windows Update
     WindowsDefenderUpdate = [bool]$true     # Update Defender definitions via SetupComplete
     SetTimeZone           = [bool]$true     # Auto-detect timezone from IP
     ClearDiskConfirm      = [bool]$False    # Do not prompt before wiping disk (ZTI)
     ShutdownSetupComplete = [bool]$false    # Restart (not shutdown) after SetupComplete
-    SyncMSUpCatDriverUSB  = [bool]$true     # Sync MS Update Catalog drivers from USB if present
+    SyncMSUpCatDriverUSB  = [bool]$false     # Sync MS Update Catalog drivers from USB if present
     CheckSHA1             = [bool]$true     # Verify OS image SHA1 hash before applying
 };
 
