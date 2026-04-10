@@ -46,7 +46,7 @@ param(
     [switch]$UpdateUSBOnly,
 
     # Workspace path
-    [string]$WorkspacePath = 'C:\OSDCloud\ANS'
+    [string]$WorkspacePath = 'C:\ans-osd'
 )
 
 #region --- Config ---

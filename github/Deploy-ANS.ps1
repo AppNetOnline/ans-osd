@@ -147,5 +147,7 @@ if ($Manufacturer -match 'Lenovo') {
 
 #endregion
 
+PAUSE
+
 Write-SectionHeader "Deploy-ANS.ps1 Complete"
 Write-SectionSuccess "Machine will reboot → SetupComplete (Bootstrap → PostOS) → OOBE."

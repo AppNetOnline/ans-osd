@@ -9,7 +9,7 @@
     Passed by Bootstrap.ps1. Defaults to $PSScriptRoot if not provided.
 
 .NOTES
-    GitHub  : https://raw.githubusercontent.com/your-org/ans-osd/main/PostOS-Choco.ps1
+    GitHub  : https://raw.githubusercontent.com/AppNetOnline/ans-osd/refs/heads/main/PostOS-Choco.ps1
     Context : SetupComplete phase (SYSTEM), runs before OOBE
     Secrets : Read from secrets.json in $SetupCompleteDir (copied from USB by OSDCloud)
 #>
