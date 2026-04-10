@@ -1,0 +1,40 @@
+{
+    "_comment": "App manifest for PostOS-Direct.ps1. All URLs must be direct download links. type: msi or exe.",
+    "apps": [
+        {
+            "name":    "7-Zip",
+            "url":     "https://www.7-zip.org/a/7z2408-x64.msi",
+            "type":    "msi",
+            "args":    "/qn",
+            "version": "24.08"
+        },
+        {
+            "name":    "Google Chrome",
+            "url":     "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
+            "type":    "msi",
+            "args":    "/qn",
+            "version": "latest"
+        },
+        {
+            "name":    "Adobe Acrobat Reader",
+            "url":     "https://ardownload2.adobe.com/pub/adobe/acrobat/win/AcrobatDC/2300820533/AcroRdrDC2300820533_en_US.exe",
+            "type":    "exe",
+            "args":    "/sAll /msi /norestart ALLUSERS=1",
+            "version": "23.008"
+        },
+        {
+            "name":    "Notepad++",
+            "url":     "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.5/npp.8.7.5.Installer.x64.exe",
+            "type":    "exe",
+            "args":    "/S",
+            "version": "8.7.5"
+        },
+        {
+            "name":    "Visual C++ Redistributable 2015-2022 x64",
+            "url":     "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+            "type":    "exe",
+            "args":    "/install /quiet /norestart",
+            "version": "latest"
+        }
+    ]
+}
