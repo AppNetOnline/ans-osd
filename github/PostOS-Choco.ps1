@@ -20,9 +20,9 @@ param(
 
 #region --- Logging ---
 
-$Script:LogDir  = 'C:\OSDCloud\Logs'
+$Script:LogDir = 'C:\OSDCloud\Logs'
 $Script:LogFile = "$($Script:LogDir)\PostOS-Choco.log"
-$Script:TmpDir  = 'C:\OSDCloud\Installers'
+$Script:TmpDir = 'C:\OSDCloud\Installers'
 
 foreach ($dir in @($Script:LogDir, $Script:TmpDir)) {
     if (!(Test-Path $dir)) { New-Item $dir -ItemType Directory -Force | Out-Null }
@@ -32,14 +32,14 @@ function Write-Log {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Message,
-        [ValidateSet('INFO','WARN','ERROR','SUCCESS')][string]$Level = 'INFO'
+        [ValidateSet('INFO', 'WARN', 'ERROR', 'SUCCESS')][string]$Level = 'INFO'
     )
-    $ts    = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $color = switch ($Level) {
-        'INFO'    { 'Cyan'    }
-        'WARN'    { 'Yellow'  }
-        'ERROR'   { 'Red'     }
-        'SUCCESS' { 'Green'   }
+        'INFO' { 'Cyan' }
+        'WARN' { 'Yellow' }
+        'ERROR' { 'Red' }
+        'SUCCESS' { 'Green' }
     }
     $entry = "[$ts][$Level] $Message"
     Write-Host $entry -ForegroundColor $color
@@ -97,7 +97,7 @@ try {
     if (-not $nuget -or $nuget.Version -lt '2.8.5.201') {
         Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers | Out-Null
     }
-    foreach ($mod in @('Microsoft.PowerShell.SecretManagement','Microsoft.PowerShell.SecretStore')) {
+    foreach ($mod in @('Microsoft.PowerShell.SecretManagement', 'Microsoft.PowerShell.SecretStore')) {
         if (-not (Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue)) {
             Install-Module $mod -Force -SkipPublisherCheck -Scope AllUsers -ErrorAction Stop
         }
@@ -136,7 +136,7 @@ catch {
 
 function Get-DeploySecret {
     param([Parameter(Mandatory)][string]$Name)
-    try   { return (Get-Secret -Name $Name -Vault $VaultName -AsPlainText -ErrorAction Stop) }
+    try { return (Get-Secret -Name $Name -Vault $VaultName -AsPlainText -ErrorAction Stop) }
     catch { Write-Log "Could not read secret '$Name': $($_.Exception.Message)" 'ERROR'; return $null }
 }
 
@@ -146,7 +146,8 @@ function Get-DeploySecret {
 
 Write-Log 'Creating ANSAdmin local administrator...'
 try {
-    $adminPass  = Get-DeploySecret 'ANSAdminPassword'
+    $adminPass = Get-DeploySecret 'ANSAdminPassword'
+    Write-Host "SECRET TEST $($adminPass)"
     $securePass = ConvertTo-SecureString $adminPass -AsPlainText -Force
 
     if (Get-LocalUser -Name 'ANSAdmin' -ErrorAction SilentlyContinue) {
@@ -177,7 +178,7 @@ catch {
 Write-Log 'Configuring single-use auto-logon...'
 try {
     $adminPass = Get-DeploySecret 'ANSAdminPassword'
-    $regPath   = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
     Set-ItemProperty $regPath -Name AutoAdminLogon    -Value '1'              -Type String
     Set-ItemProperty $regPath -Name DefaultUserName   -Value 'ANSAdmin'       -Type String
     Set-ItemProperty $regPath -Name DefaultPassword   -Value $adminPass        -Type String
@@ -256,10 +257,10 @@ try {
     if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [System.Net.ServicePointManager]::SecurityProtocol =
-            [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
         Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
-                    [System.Environment]::GetEnvironmentVariable('Path','User')
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+        [System.Environment]::GetEnvironmentVariable('Path', 'User')
     }
     Write-Log 'Chocolatey ready.' 'SUCCESS'
 }
@@ -276,7 +277,7 @@ foreach ($pkg in $ChocoPackages) {
     Write-Log "Installing: $pkg"
     try {
         $output = choco install $pkg -y --no-progress --limit-output 2>&1
-        if ($LASTEXITCODE -in @(0,3010)) { Write-Log "$pkg installed." 'SUCCESS' }
+        if ($LASTEXITCODE -in @(0, 3010)) { Write-Log "$pkg installed." 'SUCCESS' }
         else { Write-Log "$pkg exit code $LASTEXITCODE : $($output -join ' ')" 'WARN' }
     }
     catch { Write-Log "$pkg exception: $($_.Exception.Message)" 'WARN' }
@@ -285,7 +286,7 @@ foreach ($pkg in $ChocoPackages) {
 #endregion
 
 #region --- Install SentinelOne ---
-
+<#
 Write-Log '--- Installing SentinelOne ---'
 try {
     $s1Token = Get-DeploySecret 'SentinelOneToken'
@@ -301,16 +302,17 @@ try {
     else { Write-Log "SentinelOne exit code: $($proc.ExitCode)" 'WARN' }
 }
 catch { Write-Log "SentinelOne failed: $($_.Exception.Message)" 'ERROR' }
+#>
 
 #endregion
 
 #region --- Install ConnectWise Automate ---
-
+<#
 Write-Log '--- Installing ConnectWise Automate ---'
 try {
     $cwaServer = Get-DeploySecret 'CWAServerURL'
-    $cwaKey    = Get-DeploySecret 'CWAInstallerKey'
-    $cwaLocId  = Get-DeploySecret 'CWALocationID'
+    $cwaKey = Get-DeploySecret 'CWAInstallerKey'
+    $cwaLocId = Get-DeploySecret 'CWALocationID'
     if (-not $cwaServer -or -not $cwaKey -or -not $cwaLocId) { throw 'Missing CWA secrets.' }
 
     $cwaUrl = "$cwaServer/Labtech/Deployment.aspx?InstallerType=msi&ID=$cwaKey&LocationID=$cwaLocId"
@@ -319,10 +321,12 @@ try {
     (New-Object System.Net.WebClient).DownloadFile($cwaUrl, $cwaMsi)
 
     $proc = Start-Process msiexec.exe -ArgumentList "/i `"$cwaMsi`" /qn /l*v `"$Script:LogDir\CWA.log`"" -Wait -PassThru
-    if ($proc.ExitCode -in @(0,3010)) { Write-Log 'CWA installed.' 'SUCCESS' }
+    if ($proc.ExitCode -in @(0, 3010)) { Write-Log 'CWA installed.' 'SUCCESS' }
     else { Write-Log "CWA exit code: $($proc.ExitCode)" 'WARN' }
 }
 catch { Write-Log "CWA failed: $($_.Exception.Message)" 'ERROR' }
+#>
+
 
 #endregion
 
@@ -341,7 +345,7 @@ try {
 
     # Purge vault
     Get-SecretInfo -Vault $VaultName -ErrorAction SilentlyContinue |
-        ForEach-Object { Remove-Secret -Name $_.Name -Vault $VaultName -ErrorAction SilentlyContinue }
+    ForEach-Object { Remove-Secret -Name $_.Name -Vault $VaultName -ErrorAction SilentlyContinue }
     Unregister-SecretVault -Name $VaultName -ErrorAction SilentlyContinue
     Write-Log 'Vault purged.' 'SUCCESS'
 }

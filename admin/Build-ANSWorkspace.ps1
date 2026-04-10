@@ -55,7 +55,7 @@ param(
 $TemplateName  = 'ANS-WinPE'
 
 # Your public GitHub raw base URL for Deploy-ANS.ps1
-$DeployScriptURL = 'https://raw.githubusercontent.com/your-org/ans-osd/main/Deploy-ANS.ps1'
+$DeployScriptURL = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/Deploy-ANS.ps1'
 
 # WinPE cloud drivers to inject (comma-separated or wildcard *)
 # Options: Dell, HP, IntelNet, LenovoDock, Nutanix, Surface, USB, VMware, WiFi

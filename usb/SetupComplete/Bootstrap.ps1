@@ -18,7 +18,7 @@
 # =============================================================================
 
 # Your public GitHub raw base URL (no trailing slash)
-$GitHubBaseURL = 'https://raw.githubusercontent.com/your-org/ans-osd/main/github'
+$GitHubBaseURL = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main'
 
 # Which PostOS script to run: 'Chocolatey' or 'Direct'
 $PostOSMethod = 'Chocolatey'
