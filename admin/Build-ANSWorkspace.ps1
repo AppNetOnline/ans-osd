@@ -258,14 +258,28 @@ Write-OK "WinPE configuration complete."
 #endregion
 
 #region --- Step 5: Stage SetupComplete Files in Workspace ---
-# Files placed here are automatically copied to the USB \OSDCloud\Config\Scripts\SetupComplete\
-# when you run New-OSDCloudISO or Update-OSDCloudUSB.
-# OSDCloud then automatically copies them to C:\OSDCloud\Scripts\SetupComplete\
-# on the target machine and wires SetupComplete.cmd.
+# Files are copied from the project's usb\SetupComplete\ folder — no hardcoded content here.
+# Edit Bootstrap.ps1 and SetupComplete.cmd directly in the project; this script just copies them.
+#
+# Files placed in the workspace here are automatically copied to the USB NTFS partition
+# at \OSDCloud\Config\Scripts\SetupComplete\ when you run New-OSDCloudISO or Update-OSDCloudUSB.
+# OSDCloud then copies them to C:\OSDCloud\Scripts\SetupComplete\ on the target machine
+# and wires C:\Windows\Setup\Scripts\SetupComplete.cmd to call them.
 
 Write-Step "Step 5: Staging SetupComplete Files in Workspace"
 
-# Correct workspace path for SetupComplete content that ends up on the USB NTFS partition
+# Source: usb\SetupComplete\ folder sitting next to this script in the project
+$setupCompleteSource = Join-Path $PSScriptRoot '..\usb\SetupComplete'
+$setupCompleteSource = (Resolve-Path $setupCompleteSource -ErrorAction SilentlyContinue).Path
+
+If (-not $setupCompleteSource -or -not (Test-Path $setupCompleteSource)) {
+    Write-Fail "usb\SetupComplete\ folder not found relative to this script."
+    Write-Fail "Expected: $(Join-Path $PSScriptRoot '..\usb\SetupComplete')"
+    Write-Fail "Ensure the project structure is intact with usb\SetupComplete\ alongside admin\"
+    exit 1
+};
+
+# Destination in workspace — OSDCloud picks this up automatically
 $setupCompleteDest = "$activeWorkspace\OSDCloud\Config\Scripts\SetupComplete"
 
 If (!(Test-Path $setupCompleteDest)) {
@@ -273,136 +287,26 @@ If (!(Test-Path $setupCompleteDest)) {
     Write-OK "Created: $setupCompleteDest"
 };
 
-# --- SetupComplete.cmd ---
-$setupCompleteCmd = @'
-@ECHO OFF
-:: OSDCloud entry point — calls Bootstrap.ps1 which downloads the latest
-:: PostOS script from GitHub and runs it with secrets.json from this folder.
-powershell.exe -NoLogo -NonInteractive -ExecutionPolicy Bypass -File "%~dp0Bootstrap.ps1"
-'@
-$setupCompleteCmd | Out-File "$setupCompleteDest\SetupComplete.cmd" -Encoding ascii -Force
-Write-OK "SetupComplete.cmd staged."
+# Copy all files from project usb\SetupComplete\ to workspace
+Write-Info "Copying from: $setupCompleteSource"
+Write-Info "Copying to  : $setupCompleteDest"
 
-# --- Bootstrap.ps1 ---
-# NOTE: Replace the GitHubBaseURL value before building production USB
-$bootstrapPs1 = @'
-#Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    ANS OSDCloud SetupComplete Bootstrap
-    Downloads the latest PostOS script from GitHub and runs it.
-    Reads secrets.json from the same directory (copied from USB by OSDCloud).
-#>
+Get-ChildItem $setupCompleteSource -File | ForEach-Object {
+    Copy-Item $_.FullName -Destination $setupCompleteDest -Force
+    Write-OK "Copied: $($_.Name)"
+};
 
-param([string]$SetupCompleteDir = $PSScriptRoot)
-
-# ============================================================
-# EDIT THIS: Your public GitHub raw base URL
-# ============================================================
-$GitHubBaseURL = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main'
-
-# 'Chocolatey' or 'Direct'
-$PostOSMethod = 'Chocolatey'
-
-$MaxRetries    = 3
-$RetryDelaySec = 10
-
-#region --- Logging ---
-$LogFile = 'C:\OSDCloud\Logs\Bootstrap.log'
-if (!(Test-Path (Split-Path $LogFile))) { New-Item (Split-Path $LogFile) -ItemType Directory -Force | Out-Null }
-
-function Write-Log {
-    param([Parameter(Mandatory)][string]$Message, [ValidateSet('INFO','WARN','ERROR','SUCCESS')][string]$Level = 'INFO')
-    $ts    = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $color = switch ($Level) { 'INFO' {'Cyan'} 'WARN' {'Yellow'} 'ERROR' {'Red'} 'SUCCESS' {'Green'} }
-    $entry = "[$ts][$Level] $Message"
-    Write-Host $entry -ForegroundColor $color
-    $entry | Out-File $LogFile -Append -Encoding utf8
-}
-
-Write-Log '======================================================' 'INFO'
-Write-Log "Bootstrap.ps1 started | Method: $PostOSMethod | Dir: $SetupCompleteDir"
-Write-Log '======================================================' 'INFO'
-#endregion
-
-#region --- Verify secrets.json ---
-$SecretsPath = Join-Path $SetupCompleteDir 'secrets.json'
-if (-not (Test-Path $SecretsPath)) {
-    Write-Log "FATAL: secrets.json not found at $SecretsPath" 'ERROR'
-    Write-Log "Place secrets.json in \OSDCloud\Config\Scripts\SetupComplete\ on the USB." 'ERROR'
-    exit 1
-}
-Write-Log "secrets.json confirmed: $SecretsPath" 'SUCCESS'
-#endregion
-
-#region --- Download PostOS script ---
-$scriptName = if ($PostOSMethod -eq 'Direct') { 'PostOS-Direct.ps1' } else { 'PostOS-Choco.ps1' }
-$scriptURL  = "$GitHubBaseURL/$scriptName"
-$scriptDest = Join-Path $SetupCompleteDir $scriptName
-
-$downloaded = $false
-$attempt    = 0
-while (-not $downloaded -and $attempt -lt $MaxRetries) {
-    $attempt++
-    Write-Log "Downloading $scriptName (attempt $attempt/$MaxRetries)..."
-    try {
-        Invoke-WebRequest -Uri $scriptURL -OutFile $scriptDest -UseBasicParsing -ErrorAction Stop
-        if (Test-Path $scriptDest) { $downloaded = $true; Write-Log "$scriptName downloaded." 'SUCCESS' }
+# Warn if secrets.json still contains placeholder values
+$stagedSecrets = Join-Path $setupCompleteDest 'secrets.json'
+If (Test-Path $stagedSecrets) {
+    $secretsContent = Get-Content $stagedSecrets -Raw
+    If ($secretsContent -match 'REPLACE_ME' -or $secretsContent -match 'REPLACE —') {
+        Write-Warn "secrets.json contains placeholder values — fill in real values before deploying!"
     }
-    catch {
-        Write-Log "Attempt $attempt failed: $($_.Exception.Message)" 'WARN'
-        if ($attempt -lt $MaxRetries) { Start-Sleep -Seconds $RetryDelaySec }
+    Else {
+        Write-OK "secrets.json looks populated."
     }
-}
-if (-not $downloaded) { Write-Log "All download attempts failed." 'ERROR'; exit 1 }
-#endregion
-
-#region --- Download manifest.json (Direct method only) ---
-if ($PostOSMethod -eq 'Direct') {
-    $manifestDest = Join-Path $SetupCompleteDir 'manifest.json'
-    try {
-        Invoke-WebRequest -Uri "$GitHubBaseURL/manifest.json" -OutFile $manifestDest -UseBasicParsing -ErrorAction Stop
-        Write-Log "manifest.json downloaded." 'SUCCESS'
-    }
-    catch { Write-Log "manifest.json download failed (non-fatal): $($_.Exception.Message)" 'WARN' }
-}
-#endregion
-
-#region --- Run PostOS script ---
-Write-Log "Launching $scriptName..."
-try {
-    & $scriptDest -SetupCompleteDir $SetupCompleteDir
-    Write-Log "$scriptName completed." 'SUCCESS'
-}
-catch {
-    Write-Log "Exception from $scriptName : $($_.Exception.Message)" 'ERROR'
-    exit 1
-}
-#endregion
-
-Write-Log 'Bootstrap.ps1 complete.' 'SUCCESS'
-'@
-$bootstrapPs1 | Out-File "$setupCompleteDest\Bootstrap.ps1" -Encoding utf8 -Force
-Write-OK "Bootstrap.ps1 staged."
-
-# --- secrets.json placeholder ---
-# The REAL secrets.json must be manually placed on the USB after creation.
-# This placeholder reminds the tech what's needed.
-$secretsPlaceholder = @'
-{
-    "_IMPORTANT": "REPLACE THIS FILE with your real secrets.json before deploying.",
-    "_DO_NOT_DEPLOY": "This placeholder must be replaced. Deploying with it will cause PostOS to fail.",
-
-    "ANSAdminPassword":        "REPLACE_ME",
-    "SentinelOneToken":        "REPLACE_ME",
-    "SentinelOneInstallerURL": "REPLACE_ME",
-    "CWAServerURL":            "REPLACE_ME",
-    "CWAInstallerKey":         "REPLACE_ME",
-    "CWALocationID":           "REPLACE_ME"
-}
-'@
-$secretsPlaceholder | Out-File "$setupCompleteDest\secrets.json" -Encoding utf8 -Force
-Write-Warn "secrets.json PLACEHOLDER staged — replace with real values on the USB after creation!"
+};
 
 Write-OK "SetupComplete staging complete: $setupCompleteDest"
 Write-Info "Contents:"
@@ -421,23 +325,23 @@ Write-OK "ISO created in $activeWorkspace"
 
 # List available ISOs
 $isoFiles = Get-ChildItem $activeWorkspace -Filter '*.iso' -ErrorAction SilentlyContinue
-if ($isoFiles) {
+If ($isoFiles) {
     Write-Info "ISOs available:"
     $isoFiles | ForEach-Object { Write-Info "  $($_.Name) ($([math]::Round($_.Length/1MB,0)) MB)" }
     Write-Info "  OSDCloud_NoPrompt.iso boots directly into WinPE without a keypress."
-}
+};
 
 # USB creation
 Write-Host "`n  Connect your OSDCloud USB drive now." -ForegroundColor Yellow
 Write-Host "  WARNING: The selected drive will be completely wiped." -ForegroundColor Red
 $createUSB = Read-Host "`n  Create USB now? [Y/N]"
 
-if ($createUSB -eq 'Y') {
+If ($createUSB -eq 'Y') {
     Write-Info "Launching New-OSDCloudISO — select your USB disk number when prompted..."
     New-OSDCloudISO -WorkspacePath $activeWorkspace
     Write-OK "USB creation complete."
 }
-else {
+Else {
     Write-Info "USB creation skipped. To create USB later:"
     Write-Info "  Set-OSDCloudWorkspace -WorkspacePath '$WorkspacePath'"
     Write-Info "  New-OSDCloudISO"
@@ -485,5 +389,7 @@ Write-Host @"
 
 Write-Host "  Build complete." -ForegroundColor Green
 Write-Host "  Workspace: $activeWorkspace`n" -ForegroundColor DarkGray
+
+Edit-OSDCloudWinPE -StartURL "https://raw.githubusercontent.com/your-org/ans-osd/main/Deploy-ANS.ps1"
 
 #endregion
