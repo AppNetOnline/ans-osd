@@ -10,37 +10,38 @@
 Set-ExecutionPolicy RemoteSigned -Force
 Import-Module OSD -Force
 
-function Write-DarkGrayDate {
+Function Write-DarkGrayDate {
     [CmdletBinding()]
-    param (
+    Param (
         [Parameter(Position = 0)]
         [System.String]
         $Message
     )
-    if ($Message) {
+    Importf ($Message) {
         Write-Host -ForegroundColor DarkGray "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) $Message"
     }
-    else {
+    Else {
         Write-Host -ForegroundColor DarkGray "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) " -NoNewline
     }
-}
-function Write-DarkGrayHost {
+};
+
+Function Write-DarkGrayHost {
     [CmdletBinding()]
-    param (
+    Param (
         [Parameter(Mandatory = $True, Position = 0)]
         [System.String]
         $Message
     )
     Write-Host -ForegroundColor DarkGray $Message
-}
-function Write-DarkGrayLine {
+};
+Function Write-DarkGrayLine {
     [CmdletBinding()]
-    param ()
+    Param ()
     Write-Host -ForegroundColor DarkGray '========================================================================='
-}
+};
 Function Write-SectionHeader {
     [CmdletBinding()]
-    param (
+    Param (
         [Parameter(Mandatory = $True, Position = 0)]
         [System.String]
         $Message
@@ -48,10 +49,10 @@ Function Write-SectionHeader {
     Write-DarkGrayLine
     Write-DarkGrayDate
     Write-Host -ForegroundColor Cyan $Message
-}
+};
 Function Write-SectionSuccess {
     [CmdletBinding()]
-    param (
+    Param (
         [Parameter(Position = 0)]
         [System.String]
         $Message = 'Success!'
@@ -158,4 +159,4 @@ If ($Manufacturer -match "Lenovo") {
 #endregion
 
 #Restart
-#Restart-Computer
+Restart-Computer -Force
