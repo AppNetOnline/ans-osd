@@ -7,6 +7,9 @@
 
 #region Initialization
 
+Set-ExecutionPolicy RemoteSigned -Force
+Import-Module OSD -Force
+
 function Write-DarkGrayDate {
     [CmdletBinding()]
     param (
