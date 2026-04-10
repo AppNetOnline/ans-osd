@@ -9,6 +9,7 @@ secrets.json
 workspace/
 Media/
 OSDCloud/
+admin/
 *.iso
 *.wim
 
