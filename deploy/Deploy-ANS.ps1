@@ -64,74 +64,72 @@ function Write-SectionSuccess {
 
 $System32 = Join-Path $env:SystemRoot 'System32';
 $CurlPath = Join-Path $System32 'curl.exe';
+$InstallCurl = $True;
 
-# --- Check first ---
 if (Test-Path $CurlPath) {
     try {
         & $CurlPath --version | Out-Null;
         Write-Host "curl is already available at $CurlPath" -ForegroundColor Yellow;
-        return;
+        $InstallCurl = $False;
     }
     catch {
-        Write-Warning "curl.exe exists but failed to execute. Reinstalling...";
+        Write-Warning 'curl.exe exists but failed to execute. Reinstalling...';
     }
 }
 
-# --- Install ---
-$BasePath    = 'X:\OSDCloud\Temp\curl';
-$ZipPath     = Join-Path $BasePath 'curl.zip';
-$ExtractPath = Join-Path $BasePath 'Extract';
-$DownloadUri = 'https://curl.se/windows/latest.cgi?p=win64-mingw.zip';
+if ($InstallCurl) {
+    $BasePath    = 'X:\OSDCloud\Temp\curl';
+    $ZipPath     = Join-Path $BasePath 'curl.zip';
+    $ExtractPath = Join-Path $BasePath 'Extract';
+    $DownloadUri = 'https://curl.se/windows/latest.cgi?p=win64-mingw.zip';
 
-New-Item -Path $BasePath -ItemType Directory -Force | Out-Null;
+    New-Item -Path $BasePath -ItemType Directory -Force | Out-Null;
 
-Write-Host 'Downloading curl for Windows ...' -ForegroundColor Cyan;
-Invoke-WebRequest `
-    -Uri $DownloadUri `
-    -OutFile $ZipPath `
-    -UseBasicParsing;
+    Write-Host 'Downloading curl for Windows ...' -ForegroundColor Cyan;
+    Invoke-WebRequest `
+        -Uri $DownloadUri `
+        -OutFile $ZipPath `
+        -UseBasicParsing;
 
-Write-Host 'Extracting curl package ...' -ForegroundColor Cyan;
-Expand-Archive `
-    -Path $ZipPath `
-    -DestinationPath $ExtractPath `
-    -Force;
+    Write-Host 'Extracting curl package ...' -ForegroundColor Cyan;
+    Expand-Archive `
+        -Path $ZipPath `
+        -DestinationPath $ExtractPath `
+        -Force;
 
-$RequiredFiles = @(
-    'curl.exe',
-    'libcurl-x64.dll',
-    'libssl-*.dll',
-    'libcrypto-*.dll',
-    'zlib1.dll'
-);
+    $RequiredFiles = @(
+        'curl.exe',
+        'libcurl-x64.dll',
+        'libssl-*.dll',
+        'libcrypto-*.dll',
+        'zlib1.dll'
+    );
 
-foreach ($Pattern in $RequiredFiles) {
-    $FoundFiles = Get-ChildItem `
-        -Path $ExtractPath `
-        -Recurse `
-        -File `
-        -Filter $Pattern `
-        -ErrorAction SilentlyContinue;
+    foreach ($Pattern in $RequiredFiles) {
+        $FoundFiles = Get-ChildItem `
+            -Path $ExtractPath `
+            -Recurse `
+            -File `
+            -Filter $Pattern `
+            -ErrorAction SilentlyContinue;
 
-    foreach ($File in $FoundFiles) {
-        Copy-Item `
-            -Path $File.FullName `
-            -Destination (Join-Path $System32 $File.Name) `
-            -Force;
+        foreach ($File in $FoundFiles) {
+            Copy-Item `
+                -Path $File.FullName `
+                -Destination (Join-Path $System32 $File.Name) `
+                -Force;
 
-        Write-Host "Copied $($File.Name)" -ForegroundColor Green;
+            Write-Host "Copied $($File.Name)" -ForegroundColor Green;
+        }
     }
-}
 
-# --- Validate ---
-if (-not (Test-Path $CurlPath)) {
-    throw 'curl.exe was not installed';
-}
+    if (-not (Test-Path $CurlPath)) {
+        throw 'curl.exe was not installed';
+    }
 
-Write-Host 'Validating curl...' -ForegroundColor Cyan;
-& $CurlPath --version;
-
-Write-Host 'curl is ready in WinPE.' -ForegroundColor Green;
+    Write-Host 'Validating curl...' -ForegroundColor Cyan;
+    & $CurlPath --version;
+};
 
 #region --- OS Variables ---
 
