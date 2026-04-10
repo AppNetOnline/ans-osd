@@ -9,51 +9,82 @@
 
 #region --- Helper Functions ---
 
-function Write-DarkGrayDate {
-    [CmdletBinding()]
-    param([Parameter(Position = 0)][System.String]$Message)
-    if ($Message) { Write-Host -ForegroundColor DarkGray "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) $Message" }
-    else          { Write-Host -ForegroundColor DarkGray "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) " -NoNewline }
-}
-function Write-DarkGrayHost {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][System.String]$Message)
-    Write-Host -ForegroundColor DarkGray $Message
-}
-function Write-DarkGrayLine {
-    Write-Host -ForegroundColor DarkGray '========================================================================='
-}
-function Write-SectionHeader {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][System.String]$Message)
-    Write-DarkGrayLine
-    Write-DarkGrayDate
-    Write-Host -ForegroundColor Cyan $Message
-}
-function Write-SectionSuccess {
-    [CmdletBinding()]
-    param([System.String]$Message = 'Success!')
-    Write-DarkGrayDate
-    Write-Host -ForegroundColor Green $Message
+Set-StrictMode -Version Latest;
+$ErrorActionPreference = 'Stop';
+
+$BasePath = 'X:\OSDCloud\Temp\curl';
+$ZipPath = Join-Path $BasePath 'curl.zip';
+$ExtractPath = Join-Path $BasePath 'Extract';
+$System32 = Join-Path $env:SystemRoot 'System32';
+$DownloadUri = 'https://curl.se/windows/latest.cgi?p=win64-mingw.zip';
+
+New-Item -Path $BasePath -ItemType Directory -Force | Out-Null;
+
+Write-Host 'Downloading curl for Windows ...' -ForegroundColor Cyan;
+Invoke-WebRequest `
+    -Uri $DownloadUri `
+    -OutFile $ZipPath `
+    -UseBasicParsing;
+
+Write-Host 'Extracting curl package ...' -ForegroundColor Cyan;
+Expand-Archive `
+    -Path $ZipPath `
+    -DestinationPath $ExtractPath `
+    -Force;
+
+$RequiredFiles = @(
+    'curl.exe',
+    'libcurl-x64.dll',
+    'libssl-*.dll',
+    'libcrypto-*.dll',
+    'zlib1.dll'
+);
+
+foreach ($Pattern in $RequiredFiles) {
+    $FoundFiles = Get-ChildItem `
+        -Path $ExtractPath `
+        -Recurse `
+        -File `
+        -Filter $Pattern `
+        -ErrorAction SilentlyContinue;
+
+    if (-not $FoundFiles) {
+        Write-Warning "No files found matching: $Pattern";
+        continue;
+    }
+
+    foreach ($File in $FoundFiles) {
+        Copy-Item `
+            -Path $File.FullName `
+            -Destination (Join-Path $System32 $File.Name) `
+            -Force;
+
+        Write-Host "Copied $($File.Name) to $System32" -ForegroundColor Green;
+    }
 }
 
-#endregion
+$CurlPath = Join-Path $System32 'curl.exe';
 
-$ScriptName    = 'Deploy-ANS.ps1'
-$ScriptVersion = '1.2.0'
-Write-Host -ForegroundColor Green "$ScriptName $ScriptVersion"
+if (-not (Test-Path $CurlPath)) {
+    throw 'curl.exe was not copied successfully';
+}
+
+Write-Host 'Testing curl.exe ...' -ForegroundColor Cyan;
+& $CurlPath --version;
+
+Write-Host 'curl installed in current WinPE session.' -ForegroundColor Green;
 
 #region --- OS Variables ---
 
-$Product      = (Get-MyComputerProduct)
-$Model        = (Get-MyComputerModel)
+$Product = (Get-MyComputerProduct)
+$Model = (Get-MyComputerModel)
 $Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
-$OSVersion    = 'Windows 11'
-$OSReleaseID  = '25H2'
-$OSName       = 'Windows 11 24H2 x64'
-$OSEdition    = 'Pro'
+$OSVersion = 'Windows 11'
+$OSReleaseID = '25H2'
+$OSName = 'Windows 11 24H2 x64'
+$OSEdition = 'Pro'
 $OSActivation = 'Volume'
-$OSLanguage   = 'en-us'
+$OSLanguage = 'en-us'
 
 #endregion
 
@@ -91,7 +122,7 @@ if ($DriverPack) {
 
 If (Test-HPIASupport) {
     Write-SectionHeader "Detected HP Device — Enabling HPIA, BIOS and TPM Updates"
-    $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
+    $Global:MyOSDCloud.HPTPMUpdate = [bool]$True
     $Global:MyOSDCloud.HPBIOSUpdate = [bool]$true
     # Skip HPIA on known problematic models
     if ($Product -ne '83B2' -and $Model -notmatch 'zbook') {
