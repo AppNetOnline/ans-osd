@@ -66,7 +66,7 @@ $Global:MyOSDCloud = [ordered]@{
     RecoveryPartition     = [bool]$true     # Create WinRE recovery partition
     OEMActivation         = [bool]$True     # Use BIOS-embedded product key if present
     WindowsUpdate         = [bool]$true     # Install Windows Updates via SetupComplete
-    WindowsUpdateDrivers  = [bool]$false    # Install driver updates via Windows Update
+    WindowsUpdateDrivers  = [bool]$true    # Install driver updates via Windows Update
     WindowsDefenderUpdate = [bool]$true     # Update Defender definitions via SetupComplete
     SetTimeZone           = [bool]$true     # Auto-detect timezone from IP
     ClearDiskConfirm      = [bool]$False    # Do not prompt before wiping disk (ZTI)
@@ -79,11 +79,12 @@ $Global:MyOSDCloud = [ordered]@{
 
 #region --- Driver Pack Detection ---
 
+<#
 $DriverPack = Get-OSDCloudDriverPack -Product $Product -OSVersion $OSVersion -OSReleaseID $OSReleaseID
 if ($DriverPack) {
     $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
 }
-
+#>
 #endregion
 
 #region --- Vendor-Specific Pre-OS Actions ---
