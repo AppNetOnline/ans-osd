@@ -27,7 +27,7 @@ function Write-DarkGrayDate {
 function Write-DarkGrayHost {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, Position = 0)]
+        [Parameter(Mandatory = $True, Position = 0)]
         [System.String]
         $Message
     )
@@ -38,10 +38,10 @@ function Write-DarkGrayLine {
     param ()
     Write-Host -ForegroundColor DarkGray '========================================================================='
 }
-function Write-SectionHeader {
+Function Write-SectionHeader {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, Position = 0)]
+        [Parameter(Mandatory = $True, Position = 0)]
         [System.String]
         $Message
     )
@@ -49,7 +49,7 @@ function Write-SectionHeader {
     Write-DarkGrayDate
     Write-Host -ForegroundColor Cyan $Message
 }
-function Write-SectionSuccess {
+Function Write-SectionSuccess {
     [CmdletBinding()]
     param (
         [Parameter(Position = 0)]
@@ -58,7 +58,7 @@ function Write-SectionSuccess {
     )
     Write-DarkGrayDate
     Write-Host -ForegroundColor Green $Message
-}
+};
 
 #endregion
 
@@ -83,17 +83,17 @@ $OSLanguage   = 'en-us'
 #region OSDCloud Global Variables
 
 $Global:MyOSDCloud = [ordered]@{
-    Restart               = [bool]$True
-    RecoveryPartition     = [bool]$true
+    Restart               = [bool]$False
+    RecoveryPartition     = [bool]$True
     OEMActivation         = [bool]$True
-    WindowsUpdate         = [bool]$true
-    WindowsUpdateDrivers  = [bool]$true
-    WindowsDefenderUpdate = [bool]$true
-    SetTimeZone           = [bool]$true
+    WindowsUpdate         = [bool]$True
+    WindowsUpdateDrivers  = [bool]$True
+    WindowsDefenderUpdate = [bool]$True
+    SetTimeZone           = [bool]$True
     ClearDiskConfirm      = [bool]$False
     ShutdownSetupComplete = [bool]$false
-    SyncMSUpCatDriverUSB  = [bool]$true
-    CheckSHA1             = [bool]$true
+    SyncMSUpCatDriverUSB  = [bool]$True
+    CheckSHA1             = [bool]$True
 };
 
 #endregion
@@ -102,32 +102,32 @@ $Global:MyOSDCloud = [ordered]@{
 
 $DriverPack = Get-OSDCloudDriverPack -Product $Product -OSVersion $OSVersion -OSReleaseID $OSReleaseID
 
-if ($DriverPack) {
+If ($DriverPack) {
     $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
-}
+};
 
 #endregion
 
 #region Vendor-Specific
 
-if (Test-HPIASupport) {
+If (Test-HPIASupport) {
     Write-SectionHeader -Message "Detected HP Device, Enabling HPIA, HP BIOS and HP TPM Updates"
     $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
-    $Global:MyOSDCloud.HPBIOSUpdate = [bool]$true
-    if ($Product -ne '83B2' -and $Model -notmatch "zbook") {
-        $Global:MyOSDCloud.HPIAALL = [bool]$true
-    }
+    $Global:MyOSDCloud.HPBIOSUpdate = [bool]$True
+    If ($Product -ne '83B2' -and $Model -notmatch "zbook") {
+        $Global:MyOSDCloud.HPIAALL = [bool]$True
+    };
     Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1")
     Manage-HPBiosSettings -SetSettings
-}
+};
 
-if ($Manufacturer -match "Lenovo") {
+If ($Manufacturer -match "Lenovo") {
     Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1")
     try {
         Manage-LenovoBIOSSettings -SetSettings
     }
     catch {}
-}
+};
 
 #endregion
 
@@ -144,22 +144,16 @@ Start-OSDCloud -OSName $OSName -OSEdition $OSEdition -OSActivation $OSActivation
 #endregion
 
 #region Post-OSDCloud Actions
-
 Write-SectionHeader -Message "OSDCloud Process Complete, Running Custom Actions From Script Before Reboot"
 
-# CMTrace
-if (Test-Path -Path "X:\Windows\System32\cmtrace.exe") {
-    Copy-Item "X:\Windows\System32\cmtrace.exe" -Destination "C:\Windows\System\cmtrace.exe" -Verbose
-}
-
 # Lenovo module copy
-if ($Manufacturer -match "Lenovo") {
+If ($Manufacturer -match "Lenovo") {
     $PowerShellSavePath = 'C:\Program Files\WindowsPowerShell'
     Write-Host "Copy-PSModuleToFolder -Name LSUClient to $PowerShellSavePath\Modules"
     Copy-PSModuleToFolder -Name LSUClient -Destination "$PowerShellSavePath\Modules"
     Write-Host "Copy-PSModuleToFolder -Name Lenovo.Client.Scripting to $PowerShellSavePath\Modules"
     Copy-PSModuleToFolder -Name Lenovo.Client.Scripting -Destination "$PowerShellSavePath\Modules"
-}
+};
 
 #endregion
 

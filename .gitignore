@@ -11,8 +11,10 @@ Media/
 OSDCloud/
 admin/
 usb/
+Mount/
 *.iso
 *.wim
+rebuild.ps1
 
 # Logs
 *.log

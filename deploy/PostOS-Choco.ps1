@@ -1,203 +1,255 @@
+#Requires -Version 5.1
 #Requires -RunAsAdministrator
+
+Set-StrictMode -Version Latest;
+$ErrorActionPreference = 'Stop';
+
 <#
 .SYNOPSIS
-    OSDCloud PostOS Script - Chocolatey Method
-    Hosted on GitHub. Downloaded and executed by Bootstrap.ps1 at first boot.
+    OSDCloud post-OS deployment script using Chocolatey.
 
-.PARAMETER SetupCompleteDir
-    Path to the SetupComplete folder where secrets.json lives.
-    Passed by Bootstrap.ps1. Defaults to $PSScriptRoot if not provided.
+.DESCRIPTION
+    Hosted on GitHub and downloaded/executed by Bootstrap.ps1 during first boot.
+    Runs during SetupComplete in SYSTEM context before OOBE.
+
+    This script performs the following actions:
+      1. Loads deployment secrets from secrets.json
+      2. Configures Microsoft.PowerShell.SecretStore
+      3. Creates or updates the ANSAdmin local administrator account
+      4. Configures single-use auto-logon
+      5. Writes C:\Windows\Panther\Unattend.xml
+      6. Installs Chocolatey
+      7. Installs standard applications
+      8. Performs cleanup and removes sensitive data from disk
+
+.ParamETER SetupCompleteDir
+    Path to the SetupComplete working directory where secrets.json resides.
+    This is passed by Bootstrap.ps1. If not provided, defaults to $PSScriptRoot.
 
 .NOTES
-    GitHub  : https://raw.githubusercontent.com/AppNetOnline/ans-osd/refs/heads/main/PostOS-Choco.ps1
-    Context : SetupComplete phase (SYSTEM), runs before OOBE
-    Secrets : Read from secrets.json in $SetupCompleteDir (copied from USB by OSDCloud)
+    Author    : Jarod Roberts
+    Company   : Appalachian Network Services
+    GitHub    : https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/deploy/PostOS-Choco.ps1
+    Context   : SetupComplete phase (SYSTEM), runs before OOBE
+    Secrets   : Reads secrets.json from the SetupComplete directory
 #>
 
-param(
+Param(
+    [Parameter(Mandatory = $False)]
     [string]$SetupCompleteDir = $PSScriptRoot
 )
 
-#region --- Logging ---
+#region --- Variables ---
 
-$Script:LogDir = 'C:\OSDCloud\Logs'
-$Script:LogFile = "$($Script:LogDir)\PostOS-Choco.log"
-$Script:TmpDir = 'C:\OSDCloud\Installers'
+$Script:LogDir = 'C:\OSDCloud\Logs';
+$Script:LogFile = Join-Path -Path $Script:LogDir -ChildPath 'PostOS-Choco.log';
+$Script:TmpDir = 'C:\OSDCloud\Installers';
+$Script:VaultName = 'ANSDeployVault';
+$Script:SecretsPath = Join-Path -Path $SetupCompleteDir -ChildPath 'secrets.json';
+$Script:UnattendPath = 'C:\Windows\Panther\Unattend.xml';
 
-foreach ($dir in @($Script:LogDir, $Script:TmpDir)) {
-    if (!(Test-Path $dir)) { New-Item $dir -ItemType Directory -Force | Out-Null }
-}
+$ChocoPackages = @(
+    '7zip',
+    'notepadplusplus'
+);
 
-function Write-Log {
+$TimeZone = 'Central Standard Time';
+
+#endregion
+
+#region --- Functions ---
+
+Function Write-Log {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Message,
-        [ValidateSet('INFO', 'WARN', 'ERROR', 'SUCCESS')][string]$Level = 'INFO'
+    Param(
+        [Parameter(Mandatory = $True)]
+        [string]$Message,
+
+        [Parameter(Mandatory = $False)]
+        [ValidateSet('INFO', 'WARN', 'ERROR', 'SUCCESS')]
+        [string]$Level = 'INFO'
     )
-    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $color = switch ($Level) {
+
+    $TimeStamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss';
+
+    $Color = switch ($Level) {
         'INFO' { 'Cyan' }
         'WARN' { 'Yellow' }
         'ERROR' { 'Red' }
         'SUCCESS' { 'Green' }
-    }
-    $entry = "[$ts][$Level] $Message"
-    Write-Host $entry -ForegroundColor $color
-    $entry | Out-File $Script:LogFile -Append -Encoding utf8
-}
+    };
 
-Write-Log '=====================================================' 'INFO'
-Write-Log "PostOS-Choco.ps1 started"
-Write-Log "SetupCompleteDir : $SetupCompleteDir"
-Write-Log '=====================================================' 'INFO'
+    $Entry = "[{0}][{1}] {2}" -f $TimeStamp, $Level, $Message;
 
-#endregion
+    Write-Host $Entry -ForegroundColor $Color;
+    $Entry | Out-File -FilePath $Script:LogFile -Append -Encoding utf8;
+};
 
-#region --- Chocolatey Package List ---
+Function Initialize-PostOSWorkspace {
+    [CmdletBinding()]
+    Param()
 
-$ChocoPackages = @(
-    '7zip',
-    'googlechrome',
-    'adobereader',
-    'notepadplusplus',
-    'vcredist140',
-    'microsoft-teams'
-)
+    ForEach ($Path in @($Script:LogDir, $Script:TmpDir)) {
+        If (-not (Test-Path -Path $Path)) {
+            New-Item -Path $Path -ItemType Directory -Force | Out-Null;
+        };
+    };
+};
 
-$TimeZone = 'Central Standard Time'
+Function Get-DeploySecrets {
+    [CmdletBinding()]
+    Param()
 
-#endregion
+    Write-Log -Message "Loading secrets from: $($Script:SecretsPath)";
 
-#region --- Load secrets.json ---
+    If (-not (Test-Path -Path $Script:SecretsPath)) {
+        throw "secrets.json not found at $($Script:SecretsPath)";
+    };
 
-$SecretsPath = Join-Path $SetupCompleteDir 'secrets.json'
-Write-Log "Loading secrets from: $SecretsPath"
+    Return (Get-Content -Path $Script:SecretsPath -Raw -ErrorAction Stop | ConvertFrom-Json);
+};
 
-if (-not (Test-Path $SecretsPath)) {
-    Write-Log "secrets.json not found at $SecretsPath" 'ERROR'
-    exit 1
-}
-try {
-    $Secrets = Get-Content $SecretsPath -Raw -ErrorAction Stop | ConvertFrom-Json
-    Write-Log 'Secrets loaded.' 'SUCCESS'
-}
-catch {
-    Write-Log "Failed to parse secrets.json: $($_.Exception.Message)" 'ERROR'
-    exit 1
-}
+Function Initialize-SecretStoreVault {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory = $True)]
+        [psobject]$Secrets
+    )
 
-#endregion
+    Write-Log -Message 'Configuring SecretStore vault...';
 
-#region --- PowerShell SecretStore Setup ---
+    $NuGetProvider = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue;
+    If (-not $NuGetProvider -or $NuGetProvider.Version -lt [version]'2.8.5.201') {
+        Install-PackageProvider -Name NuGet -MinimumVersion '2.8.5.201' -Force -Scope AllUsers | Out-Null;
+    };
 
-Write-Log 'Configuring SecretStore vault...'
-$VaultName = 'ANSDeployVault'
-try {
-    $nuget = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
-    if (-not $nuget -or $nuget.Version -lt '2.8.5.201') {
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers | Out-Null
-    }
-    foreach ($mod in @('Microsoft.PowerShell.SecretManagement', 'Microsoft.PowerShell.SecretStore')) {
-        if (-not (Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue)) {
-            Install-Module $mod -Force -SkipPublisherCheck -Scope AllUsers -ErrorAction Stop
-        }
-        Import-Module $mod -Force -ErrorAction Stop
-    }
+    ForEach ($ModuleName in @('Microsoft.PowerShell.SecretManagement', 'Microsoft.PowerShell.SecretStore')) {
+        If (-not (Get-Module -ListAvailable -Name $ModuleName -ErrorAction SilentlyContinue)) {
+            Install-Module -Name $ModuleName -Force -SkipPublisherCheck -Scope AllUsers -ErrorAction Stop;
+        };
 
-    # No-prompt required for SYSTEM context during SetupComplete
-    Set-SecretStoreConfiguration -Authentication None -PasswordTimeout -1 -Interaction None -Confirm:$false -ErrorAction Stop
+        Import-Module -Name $ModuleName -Force -ErrorAction Stop;
+    };
 
-    if (-not (Get-SecretVault -Name $VaultName -ErrorAction SilentlyContinue)) {
-        Register-SecretVault -Name $VaultName -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault
-    }
+    Set-SecretStoreConfiguration -Authentication None -PasswordTimeout -1 -Interaction None -Confirm:$False -ErrorAction Stop;
 
-    $secretMap = @{
+    If (-not (Get-SecretVault -Name $Script:VaultName -ErrorAction SilentlyContinue)) {
+        Register-SecretVault -Name $Script:VaultName -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault -ErrorAction Stop;
+    };
+
+    $SecretMap = @{
         ANSAdminPassword        = $Secrets.ANSAdminPassword
         SentinelOneToken        = $Secrets.SentinelOneToken
         SentinelOneInstallerURL = $Secrets.SentinelOneInstallerURL
         CWAServerURL            = $Secrets.CWAServerURL
         CWAInstallerKey         = $Secrets.CWAInstallerKey
         CWALocationID           = $Secrets.CWALocationID
+    };
+
+    ForEach ($Key in $SecretMap.Keys) {
+        If ([string]::IsNullOrWhiteSpace([string]$SecretMap[$Key])) {
+            Write-Log -Message "Secret '$Key' is empty in secrets.json" -Level 'WARN';
+            continue;
+        };
+
+        Set-Secret -Name $Key -Secret $SecretMap[$Key] -Vault $Script:VaultName -ErrorAction Stop;
+    };
+
+    Write-Log -Message 'SecretStore vault populated.' -Level 'SUCCESS';
+};
+
+Function Get-DeploySecret {
+    [CmdletBinding()]
+    Param(
+        [Parameter(
+            Mandatory = $True
+        )]
+        [string]
+        $Name
+    )
+
+    try {
+        Return (Get-Secret -Name $Name -Vault $Script:VaultName -AsPlainText -ErrorAction Stop);
     }
-    foreach ($key in $secretMap.Keys) {
-        if ($secretMap[$key]) { Set-Secret -Name $key -Secret $secretMap[$key] -Vault $VaultName -ErrorAction Stop }
-        else { Write-Log "Secret '$key' is empty in secrets.json" 'WARN' }
+    catch {
+        Write-Log -Message "Could not read secret '$Name': $($_.Exception.Message)" -Level 'ERROR';
+        Return $Null;
     }
-    Write-Log 'SecretStore vault populated.' 'SUCCESS'
-}
-catch {
-    Write-Log "SecretStore setup failed: $($_.Exception.Message)" 'ERROR'
-    exit 1
-}
+};
 
-#endregion
+Function Set-ANSAdminAccount {
+    [CmdletBinding()]
+    Param()
 
-#region --- Helper ---
+    Write-Log -Message 'Creating ANSAdmin local administrator...';
 
-function Get-DeploySecret {
-    param([Parameter(Mandatory)][string]$Name)
-    try { return (Get-Secret -Name $Name -Vault $VaultName -AsPlainText -ErrorAction Stop) }
-    catch { Write-Log "Could not read secret '$Name': $($_.Exception.Message)" 'ERROR'; return $null }
-}
+    $AdminPassword = Get-DeploySecret -Name 'ANSAdminPassword';
+    If ([string]::IsNullOrWhiteSpace($AdminPassword)) {
+        throw 'ANSAdminPassword secret is missing or empty.';
+    };
 
-#endregion
+    $SecurePassword = ConvertTo-SecureString -String $AdminPassword -AsPlainText -Force;
 
-#region --- Create ANSAdmin ---
-
-Write-Log 'Creating ANSAdmin local administrator...'
-try {
-    $adminPass = Get-DeploySecret 'ANSAdminPassword'
-    Write-Host "SECRET TEST $($adminPass)"
-    $securePass = ConvertTo-SecureString $adminPass -AsPlainText -Force
-
-    if (Get-LocalUser -Name 'ANSAdmin' -ErrorAction SilentlyContinue) {
-        Write-Log 'ANSAdmin exists — updating password.' 'WARN'
-        Set-LocalUser -Name 'ANSAdmin' -Password $securePass -PasswordNeverExpires $true
-        Enable-LocalUser -Name 'ANSAdmin'
+    $ExistingUser = Get-LocalUser -Name 'ANSAdmin' -ErrorAction SilentlyContinue;
+    If ($Null -ne $ExistingUser) {
+        Write-Log -Message 'ANSAdmin exists, updating password.' -Level 'WARN';
+        $ExistingUser | Set-LocalUser -Password $SecurePassword;
+        Enable-LocalUser -Name 'ANSAdmin';
     }
-    else {
-        New-LocalUser -Name 'ANSAdmin' -Password $securePass -FullName 'ANS Administrator' `
-            -Description 'Managed local admin - ANS' -PasswordNeverExpires -AccountNeverExpires -ErrorAction Stop
-        Write-Log 'ANSAdmin created.' 'SUCCESS'
+    Else {
+        New-LocalUser `
+            -Name 'ANSAdmin' `
+            -Password $SecurePassword `
+            -FullName 'ANS Administrator' `
+            -Description 'Managed local admin - ANS' `
+            -PasswordNeverExpires `
+            -AccountNeverExpires `
+            -ErrorAction Stop | Out-Null;
+
+        Write-Log -Message 'ANSAdmin created.' -Level 'SUCCESS';
     }
 
-    $members = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue
-    if ($members.Name -notcontains "$($env:COMPUTERNAME)\ANSAdmin") {
-        Add-LocalGroupMember -Group 'Administrators' -Member 'ANSAdmin' -ErrorAction Stop
-        Write-Log 'ANSAdmin added to Administrators.' 'SUCCESS'
-    }
-}
-catch {
-    Write-Log "ANSAdmin setup failed: $($_.Exception.Message)" 'ERROR'
-}
+    $Members = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue;
+    If ($Members.Name -notcontains "$($env:COMPUTERNAME)\ANSAdmin") {
+        Add-LocalGroupMember -Group 'Administrators' -Member 'ANSAdmin' -ErrorAction Stop;
+        Write-Log -Message 'ANSAdmin added to Administrators.' -Level 'SUCCESS';
+    };
+};
 
-#endregion
+Function Set-SingleUseAutoLogon {
+    [CmdletBinding()]
+    Param()
 
-#region --- Auto-Logon (single use) ---
+    Write-Log -Message 'Configuring single-use auto-logon...';
 
-Write-Log 'Configuring single-use auto-logon...'
-try {
-    $adminPass = Get-DeploySecret 'ANSAdminPassword'
-    $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    Set-ItemProperty $regPath -Name AutoAdminLogon    -Value '1'              -Type String
-    Set-ItemProperty $regPath -Name DefaultUserName   -Value 'ANSAdmin'       -Type String
-    Set-ItemProperty $regPath -Name DefaultPassword   -Value $adminPass        -Type String
-    Set-ItemProperty $regPath -Name DefaultDomainName -Value $env:COMPUTERNAME -Type String
-    Set-ItemProperty $regPath -Name AutoLogonCount    -Value 1                -Type DWord
-    Write-Log 'Auto-logon configured (1 use).' 'SUCCESS'
-}
-catch {
-    Write-Log "Auto-logon failed: $($_.Exception.Message)" 'ERROR'
-}
+    $AdminPassword = Get-DeploySecret -Name 'ANSAdminPassword';
+    If ([string]::IsNullOrWhiteSpace($AdminPassword)) {
+        throw 'ANSAdminPassword secret is missing or empty.';
+    };
 
-#endregion
+    $RegPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon';
 
-#region --- Unattend.xml ---
+    Set-ItemProperty -Path $RegPath -Name 'AutoAdminLogon'    -Value '1'                 -Type String;
+    Set-ItemProperty -Path $RegPath -Name 'DefaultUserName'   -Value 'ANSAdmin'          -Type String;
+    Set-ItemProperty -Path $RegPath -Name 'DefaultPassword'   -Value $AdminPassword      -Type String;
+    Set-ItemProperty -Path $RegPath -Name 'DefaultDomainName' -Value $env:COMPUTERNAME   -Type String;
+    Set-ItemProperty -Path $RegPath -Name 'AutoLogonCount'    -Value 1                   -Type DWord;
 
-Write-Log 'Writing unattend.xml...'
-try {
-    $adminPass = Get-DeploySecret 'ANSAdminPassword'
-    $xml = @"
+    Write-Log -Message 'Auto-logon configured for one use.' -Level 'SUCCESS';
+};
+
+Function Set-UnattendFile {
+    [CmdletBinding()]
+    Param()
+
+    Write-Log -Message 'Writing unattend.xml...';
+
+    $PantherDir = Split-Path -Path $Script:UnattendPath -Parent;
+    If (-not (Test-Path -Path $PantherDir)) {
+        New-Item -Path $PantherDir -ItemType Directory -Force | Out-Null;
+    };
+
+    $UnattendXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="specialize">
@@ -239,120 +291,114 @@ try {
     </component>
   </settings>
 </unattend>
-"@
-    if (!(Test-Path 'C:\Windows\Panther')) { New-Item 'C:\Windows\Panther' -ItemType Directory -Force | Out-Null }
-    $xml | Out-File 'C:\Windows\Panther\Unattend.xml' -Encoding utf8 -Width 2000 -Force
-    Write-Log 'Unattend.xml written.' 'SUCCESS'
-}
-catch {
-    Write-Log "Unattend.xml failed: $($_.Exception.Message)" 'ERROR'
-}
+"@;
 
-#endregion
+    $UnattendXml | Out-File -FilePath $Script:UnattendPath -Encoding utf8 -Width 2000 -Force;
+    Write-Log -Message 'Unattend.xml written.' -Level 'SUCCESS';
+};
 
-#region --- Install Chocolatey ---
+Function Install-Chocolatey {
+    [CmdletBinding()]
+    Param()
 
-Write-Log 'Installing Chocolatey...'
-try {
-    if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol =
-        [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    Write-Log -Message 'Installing Chocolatey...';
+
+    If (-not (Get-Command -Name 'choco' -ErrorAction SilentlyContinue)) {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force;
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072;
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'));
+
         $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-        [System.Environment]::GetEnvironmentVariable('Path', 'User')
+        [System.Environment]::GetEnvironmentVariable('Path', 'User');
+    };
+
+    Write-Log -Message 'Chocolatey ready.' -Level 'SUCCESS';
+};
+
+Function Install-ChocoPackages {
+    [CmdletBinding()]
+    Param()
+
+    Write-Log -Message 'Installing standard applications...';
+
+    ForEach ($Package in $ChocoPackages) {
+        Write-Log -Message "Installing package: $Package";
+
+        try {
+            $Output = choco install $Package -y --no-progress --limit-output 2>&1;
+
+            If ($LASTEXITCODE -in @(0, 3010)) {
+                Write-Log -Message "$Package installed." -Level 'SUCCESS';
+            }
+            Else {
+                Write-Log -Message "$Package Returned exit code $LASTEXITCODE : $($Output -join ' ')" -Level 'WARN';
+            }
+        }
+        catch {
+            Write-Log -Message "$Package threw an exception: $($_.Exception.Message)" -Level 'WARN';
+        }
+    };
+};
+
+Function Invoke-Cleanup {
+    [CmdletBinding()]
+    Param()
+
+    Write-Log -Message 'Cleaning up...';
+
+    try {
+        Get-ChildItem -Path $Script:TmpDir -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue;
+
+        If (Test-Path -Path $Script:SecretsPath) {
+            Remove-Item -Path $Script:SecretsPath -Force;
+            Write-Log -Message 'secrets.json deleted from disk.' -Level 'SUCCESS';
+        };
+
+        Get-SecretInfo -Vault $Script:VaultName -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Remove-Secret -Name $_.Name -Vault $Script:VaultName -ErrorAction SilentlyContinue;
+        };
+
+        Unregister-SecretVault -Name $Script:VaultName -ErrorAction SilentlyContinue;
+        Write-Log -Message 'Vault purged.' -Level 'SUCCESS';
     }
-    Write-Log 'Chocolatey ready.' 'SUCCESS'
+    catch {
+        Write-Log -Message "Cleanup error (non-fatal): $($_.Exception.Message)" -Level 'WARN';
+    }
+};
+
+#endregion
+
+#region --- Main ---
+
+Initialize-PostOSWorkspace;
+
+Write-Log -Message '=====================================================';
+Write-Log -Message 'PostOS-Choco.ps1 started';
+Write-Log -Message "SetupCompleteDir : $SetupCompleteDir";
+Write-Log -Message '=====================================================';
+
+try {
+    $Secrets = Get-DeploySecrets;
+    Write-Log -Message 'Secrets loaded.' -Level 'SUCCESS';
+
+    Initialize-SecretStoreVault -Secrets $Secrets;
+    Set-ANSAdminAccount;
+    Set-SingleUseAutoLogon;
+    Set-UnattendFile;
+    Install-Chocolatey;
+    Install-ChocoPackages;
 }
 catch {
-    Write-Log "Chocolatey install failed: $($_.Exception.Message)" 'ERROR'
+    Write-Log -Message "Fatal error: $($_.Exception.Message)" -Level 'ERROR';
+    exit 1;
+}
+finally {
+    Invoke-Cleanup;
 }
 
-#endregion
-
-#region --- Install Apps via Chocolatey ---
-
-Write-Log 'Installing standard applications...'
-foreach ($pkg in $ChocoPackages) {
-    Write-Log "Installing: $pkg"
-    try {
-        $output = choco install $pkg -y --no-progress --limit-output 2>&1
-        if ($LASTEXITCODE -in @(0, 3010)) { Write-Log "$pkg installed." 'SUCCESS' }
-        else { Write-Log "$pkg exit code $LASTEXITCODE : $($output -join ' ')" 'WARN' }
-    }
-    catch { Write-Log "$pkg exception: $($_.Exception.Message)" 'WARN' }
-}
+Write-Log -Message '=====================================================';
+Write-Log -Message 'PostOS-Choco.ps1 complete.' -Level 'SUCCESS';
+Write-Log -Message '=====================================================';
 
 #endregion
-
-#region --- Install SentinelOne ---
-<#
-Write-Log '--- Installing SentinelOne ---'
-try {
-    $s1Token = Get-DeploySecret 'SentinelOneToken'
-    $s1Url   = Get-DeploySecret 'SentinelOneInstallerURL'
-    if (-not $s1Token -or -not $s1Url) { throw 'Missing SentinelOne secrets.' }
-
-    $s1Msi = Join-Path $Script:TmpDir 'SentinelOne.msi'
-    Write-Log "Downloading SentinelOne installer..."
-    (New-Object System.Net.WebClient).DownloadFile($s1Url, $s1Msi)
-
-    $proc = Start-Process msiexec.exe -ArgumentList "/i `"$s1Msi`" /qn SITE_TOKEN=`"$s1Token`" /l*v `"$Script:LogDir\SentinelOne.log`"" -Wait -PassThru
-    if ($proc.ExitCode -in @(0,3010)) { Write-Log 'SentinelOne installed.' 'SUCCESS' }
-    else { Write-Log "SentinelOne exit code: $($proc.ExitCode)" 'WARN' }
-}
-catch { Write-Log "SentinelOne failed: $($_.Exception.Message)" 'ERROR' }
-#>
-
-#endregion
-
-#region --- Install ConnectWise Automate ---
-<#
-Write-Log '--- Installing ConnectWise Automate ---'
-try {
-    $cwaServer = Get-DeploySecret 'CWAServerURL'
-    $cwaKey = Get-DeploySecret 'CWAInstallerKey'
-    $cwaLocId = Get-DeploySecret 'CWALocationID'
-    if (-not $cwaServer -or -not $cwaKey -or -not $cwaLocId) { throw 'Missing CWA secrets.' }
-
-    $cwaUrl = "$cwaServer/Labtech/Deployment.aspx?InstallerType=msi&ID=$cwaKey&LocationID=$cwaLocId"
-    $cwaMsi = Join-Path $Script:TmpDir 'CWAInstaller.msi'
-    Write-Log "Downloading CWA installer..."
-    (New-Object System.Net.WebClient).DownloadFile($cwaUrl, $cwaMsi)
-
-    $proc = Start-Process msiexec.exe -ArgumentList "/i `"$cwaMsi`" /qn /l*v `"$Script:LogDir\CWA.log`"" -Wait -PassThru
-    if ($proc.ExitCode -in @(0, 3010)) { Write-Log 'CWA installed.' 'SUCCESS' }
-    else { Write-Log "CWA exit code: $($proc.ExitCode)" 'WARN' }
-}
-catch { Write-Log "CWA failed: $($_.Exception.Message)" 'ERROR' }
-#>
-
-
-#endregion
-
-#region --- Cleanup ---
-
-Write-Log 'Cleaning up...'
-try {
-    Get-ChildItem $Script:TmpDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
-
-    # Delete secrets.json — no longer needed after vault is loaded
-    $localSecrets = Join-Path $SetupCompleteDir 'secrets.json'
-    if (Test-Path $localSecrets) {
-        Remove-Item $localSecrets -Force
-        Write-Log 'secrets.json deleted from disk.' 'SUCCESS'
-    }
-
-    # Purge vault
-    Get-SecretInfo -Vault $VaultName -ErrorAction SilentlyContinue |
-    ForEach-Object { Remove-Secret -Name $_.Name -Vault $VaultName -ErrorAction SilentlyContinue }
-    Unregister-SecretVault -Name $VaultName -ErrorAction SilentlyContinue
-    Write-Log 'Vault purged.' 'SUCCESS'
-}
-catch { Write-Log "Cleanup error (non-fatal): $($_.Exception.Message)" 'WARN' }
-
-#endregion
-
-Write-Log '=====================================================' 'INFO'
-Write-Log 'PostOS-Choco.ps1 complete.' 'SUCCESS'
-Write-Log '=====================================================' 'INFO'
