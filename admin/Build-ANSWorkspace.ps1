@@ -205,7 +205,7 @@ Else {
     $mediaDirs = @(
         "$WorkspacePath\Media",
         "$WorkspacePath\Media\Boot",
-        "$WorkspacePath\Media\EFI\Microsoft\Boot"
+        "$WorkspacePath\Media\EFI\Boot"
     )
     ForEach ($dir in $mediaDirs) {
         If (Test-Path $dir) {
