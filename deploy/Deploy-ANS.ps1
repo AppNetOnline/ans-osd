@@ -63,7 +63,7 @@ function Write-SectionSuccess {
 #endregion
 
 $ScriptName    = 'Deploy-ANS.ps1'
-$ScriptVersion = '1.3.1'
+$ScriptVersion = '1.3.2'
 Write-Host -ForegroundColor Green "$ScriptName $ScriptVersion"
 
 #region Variables
@@ -72,9 +72,9 @@ $Product      = (Get-MyComputerProduct)
 $Model        = (Get-MyComputerModel)
 $Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
 $OSVersion    = 'Windows 11'   # Used to determine driver pack
-$OSReleaseID  = '24H2'         # Used to determine driver pack
+$OSReleaseID  = '25H2'         # Used to determine driver pack
 $OSName       = 'Windows 11 24H2 x64'
-$OSEdition    = 'Enterprise'
+$OSEdition    = 'Pro'
 $OSActivation = 'Volume'
 $OSLanguage   = 'en-us'
 
