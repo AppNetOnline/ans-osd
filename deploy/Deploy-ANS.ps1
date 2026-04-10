@@ -1,16 +1,11 @@
-# To run: boot OSDCloud USB, at PS prompt:
-#   iex (irm 'https://raw.githubusercontent.com/your-org/ans-osd/main/Deploy-ANS.ps1')
+#to Run, boot OSDCloudUSB, at the PS Prompt:
+#   iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/Deploy-ANS.ps1')
 #
-# Baked into WinPE via Build-ANSWorkspace.ps1:
-#   Edit-OSDCloudWinPE -StartURL 'https://raw.githubusercontent.com/your-org/ans-osd/main/Deploy-ANS.ps1'
-#
-# This script is PUBLIC — no credentials, no secrets.
-# Secrets live only on the OSDCloud USB in \OSDCloud\Config\Scripts\SetupComplete\secrets.json
+# Or via startnet.cmd (set by Build-ANSWorkspace.ps1):
+#   start /wait PowerShell -NoL -C Set-ExecutionPolicy RemoteSigned -Force
+#   start /wait PowerShell -NoL -C "iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/Deploy-ANS.ps1')"
 
-#region --- Helper Functions ---
-
-Set-StrictMode -Version Latest;
-$ErrorActionPreference = 'Stop';
+#region Initialization
 
 function Write-DarkGrayDate {
     [CmdletBinding()]
@@ -62,181 +57,108 @@ function Write-SectionSuccess {
     Write-Host -ForegroundColor Green $Message
 }
 
-$System32 = Join-Path $env:SystemRoot 'System32';
-$CurlPath = Join-Path $System32 'curl.exe';
-$InstallCurl = $True;
+#endregion
 
-if (Test-Path $CurlPath) {
-    try {
-        & $CurlPath --version | Out-Null;
-        Write-Host "curl is already available at $CurlPath" -ForegroundColor Yellow;
-        $InstallCurl = $False;
-    }
-    catch {
-        Write-Warning 'curl.exe exists but failed to execute. Reinstalling...';
-    }
-}
+$ScriptName    = 'Deploy-ANS.ps1'
+$ScriptVersion = '1.3.0'
+Write-Host -ForegroundColor Green "$ScriptName $ScriptVersion"
 
-if ($InstallCurl) {
-    $BasePath    = 'X:\OSDCloud\Temp\curl';
-    $ZipPath     = Join-Path $BasePath 'curl.zip';
-    $ExtractPath = Join-Path $BasePath 'Extract';
-    $DownloadUri = 'https://curl.se/windows/latest.cgi?p=win64-mingw.zip';
+#region Variables
 
-    New-Item -Path $BasePath -ItemType Directory -Force | Out-Null;
-
-    Write-Host 'Downloading curl for Windows ...' -ForegroundColor Cyan;
-    Invoke-WebRequest `
-        -Uri $DownloadUri `
-        -OutFile $ZipPath `
-        -UseBasicParsing;
-
-    Write-Host 'Extracting curl package ...' -ForegroundColor Cyan;
-    Expand-Archive `
-        -Path $ZipPath `
-        -DestinationPath $ExtractPath `
-        -Force;
-
-    $RequiredFiles = @(
-        'curl.exe',
-        'libcurl-x64.dll',
-        'libssl-*.dll',
-        'libcrypto-*.dll',
-        'zlib1.dll'
-    );
-
-    foreach ($Pattern in $RequiredFiles) {
-        $FoundFiles = Get-ChildItem `
-            -Path $ExtractPath `
-            -Recurse `
-            -File `
-            -Filter $Pattern `
-            -ErrorAction SilentlyContinue;
-
-        foreach ($File in $FoundFiles) {
-            Copy-Item `
-                -Path $File.FullName `
-                -Destination (Join-Path $System32 $File.Name) `
-                -Force;
-
-            Write-Host "Copied $($File.Name)" -ForegroundColor Green;
-        }
-    }
-
-    if (-not (Test-Path $CurlPath)) {
-        throw 'curl.exe was not installed';
-    }
-
-    Write-Host 'Validating curl...' -ForegroundColor Cyan;
-    & $CurlPath --version;
-};
-
-#region --- OS Variables ---
-
-$Product = (Get-MyComputerProduct)
-$Model = (Get-MyComputerModel)
+$Product      = (Get-MyComputerProduct)
+$Model        = (Get-MyComputerModel)
 $Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
-$OSVersion = 'Windows 11'
-$OSReleaseID = '25H2'
-$OSName = 'Windows 11 24H2 x64'
-$OSEdition = 'Pro'
+$OSVersion    = 'Windows 11'   # Used to determine driver pack
+$OSReleaseID  = '24H2'         # Used to determine driver pack
+$OSName       = 'Windows 11 24H2 x64'
+$OSEdition    = 'Enterprise'
 $OSActivation = 'Volume'
-$OSLanguage = 'en-us'
+$OSLanguage   = 'en-us'
 
 #endregion
 
-#region --- OSDCloud Global Variables ---
-# $Global:MyOSDCloud is merged into $Global:OSDCloud at the start of Invoke-OSDCloud,
-# overriding defaults. Set everything you want here before calling Start-OSDCloud.
+#region OSDCloud Global Variables
 
 $Global:MyOSDCloud = [ordered]@{
-    Restart               = [bool]$False    # Do not auto-restart after OS apply; script controls flow
-    RecoveryPartition     = [bool]$true     # Create WinRE recovery partition
-    OEMActivation         = [bool]$True     # Use BIOS-embedded product key if present
-    WindowsUpdate         = [bool]$true     # Install Windows Updates via SetupComplete
-    WindowsUpdateDrivers  = [bool]$true    # Install driver updates via Windows Update
-    WindowsDefenderUpdate = [bool]$true     # Update Defender definitions via SetupComplete
-    SetTimeZone           = [bool]$true     # Auto-detect timezone from IP
-    ClearDiskConfirm      = [bool]$False    # Do not prompt before wiping disk (ZTI)
-    ShutdownSetupComplete = [bool]$false    # Restart (not shutdown) after SetupComplete
-    SyncMSUpCatDriverUSB  = [bool]$false     # Sync MS Update Catalog drivers from USB if present
-    CheckSHA1             = [bool]$true     # Verify OS image SHA1 hash before applying
+    Restart               = [bool]$True
+    RecoveryPartition     = [bool]$true
+    OEMActivation         = [bool]$True
+    WindowsUpdate         = [bool]$true
+    WindowsUpdateDrivers  = [bool]$true
+    WindowsDefenderUpdate = [bool]$true
+    SetTimeZone           = [bool]$true
+    ClearDiskConfirm      = [bool]$False
+    ShutdownSetupComplete = [bool]$false
+    SyncMSUpCatDriverUSB  = [bool]$true
+    CheckSHA1             = [bool]$true
 };
 
 #endregion
 
-#region --- Driver Pack Detection ---
+#region Driver Pack
 
-<#
 $DriverPack = Get-OSDCloudDriverPack -Product $Product -OSVersion $OSVersion -OSReleaseID $OSReleaseID
+
 if ($DriverPack) {
     $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
 }
-#>
+
 #endregion
 
-#region --- Vendor-Specific Pre-OS Actions ---
+#region Vendor-Specific
 
-If (Test-HPIASupport) {
-    Write-SectionHeader "Detected HP Device — Enabling HPIA, BIOS and TPM Updates"
-    $Global:MyOSDCloud.HPTPMUpdate = [bool]$True
+if (Test-HPIASupport) {
+    Write-SectionHeader -Message "Detected HP Device, Enabling HPIA, HP BIOS and HP TPM Updates"
+    $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
     $Global:MyOSDCloud.HPBIOSUpdate = [bool]$true
-    # Skip HPIA on known problematic models
-    if ($Product -ne '83B2' -and $Model -notmatch 'zbook') {
+    if ($Product -ne '83B2' -and $Model -notmatch "zbook") {
         $Global:MyOSDCloud.HPIAALL = [bool]$true
     }
-    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1")
+    iex (irm https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1)
     Manage-HPBiosSettings -SetSettings
 }
 
-If ($Manufacturer -match 'Lenovo') {
-    Write-SectionHeader "Detected Lenovo Device — Applying BIOS Settings"
-    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1")
-    try { Manage-LenovoBIOSSettings -SetSettings } catch {}
-};
+if ($Manufacturer -match "Lenovo") {
+    iex (irm https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1)
+    try {
+        Manage-LenovoBIOSSettings -SetSettings
+    }
+    catch {}
+}
 
 #endregion
 
-#region --- Print Variables and Launch OSDCloud ---
+#region Launch OSDCloud
 
 Write-SectionHeader "OSDCloud Variables"
 Write-Output $Global:MyOSDCloud
 
-Write-SectionHeader "Starting OSDCloud"
+Write-SectionHeader -Message "Starting OSDCloud"
 Write-Host "Start-OSDCloud -OSName $OSName -OSEdition $OSEdition -OSActivation $OSActivation -OSLanguage $OSLanguage"
 
 Start-OSDCloud -OSName $OSName -OSEdition $OSEdition -OSActivation $OSActivation -OSLanguage $OSLanguage
 
 #endregion
 
-#region --- Post-OSDCloud Actions ---
-# Runs in WinPE after OS image is applied, while C:\ is the offline OS volume.
-# OSDCloud has already:
-#   - Applied the OS image
-#   - Injected driver packs
-#   - Written SetupComplete.cmd (for Windows Updates)
-#   - Copied \OSDCloud\Config\Scripts\SetupComplete\ from USB to C:\OSDCloud\Scripts\SetupComplete\
-#     (which includes our Bootstrap.ps1 and secrets.json)
+#region Post-OSDCloud Actions
 
-Write-SectionHeader "OSDCloud Complete — Running Post-Deployment Actions"
+Write-SectionHeader -Message "OSDCloud Process Complete, Running Custom Actions From Script Before Reboot"
 
-# CMTrace — copy from WinPE to deployed OS for log viewing
-if (Test-Path 'X:\Windows\System32\cmtrace.exe') {
-    Copy-Item 'X:\Windows\System32\cmtrace.exe' 'C:\Windows\System\cmtrace.exe' -Force
-    Write-DarkGrayHost "CMTrace copied to C:\Windows\System\"
+# CMTrace
+if (Test-Path -Path "X:\Windows\System32\cmtrace.exe") {
+    Copy-Item "X:\Windows\System32\cmtrace.exe" -Destination "C:\Windows\System\cmtrace.exe" -Verbose
 }
 
-# Lenovo — copy PS modules to offline OS so they're available at first boot
-if ($Manufacturer -match 'Lenovo') {
-    $PSModuleDest = 'C:\Program Files\WindowsPowerShell'
-    Write-DarkGrayHost "Copying Lenovo PS modules to offline OS..."
-    Copy-PSModuleToFolder -Name LSUClient               -Destination "$PSModuleDest\Modules"
-    Copy-PSModuleToFolder -Name Lenovo.Client.Scripting -Destination "$PSModuleDest\Modules"
+# Lenovo module copy
+if ($Manufacturer -match "Lenovo") {
+    $PowerShellSavePath = 'C:\Program Files\WindowsPowerShell'
+    Write-Host "Copy-PSModuleToFolder -Name LSUClient to $PowerShellSavePath\Modules"
+    Copy-PSModuleToFolder -Name LSUClient -Destination "$PowerShellSavePath\Modules"
+    Write-Host "Copy-PSModuleToFolder -Name Lenovo.Client.Scripting to $PowerShellSavePath\Modules"
+    Copy-PSModuleToFolder -Name Lenovo.Client.Scripting -Destination "$PowerShellSavePath\Modules"
 }
 
 #endregion
 
-PAUSE
-
-Write-SectionHeader "Deploy-ANS.ps1 Complete"
-Write-SectionSuccess "Machine will reboot → SetupComplete (Bootstrap → PostOS) → OOBE."
+#Restart
+#Restart-Computer
