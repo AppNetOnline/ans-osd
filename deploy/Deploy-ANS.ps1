@@ -114,12 +114,12 @@ if (Test-HPIASupport) {
     if ($Product -ne '83B2' -and $Model -notmatch "zbook") {
         $Global:MyOSDCloud.HPIAALL = [bool]$true
     }
-    iex (irm https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1)
+    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1")
     Manage-HPBiosSettings -SetSettings
 }
 
 if ($Manufacturer -match "Lenovo") {
-    iex (irm https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1)
+    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1")
     try {
         Manage-LenovoBIOSSettings -SetSettings
     }
