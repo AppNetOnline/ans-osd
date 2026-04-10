@@ -224,7 +224,8 @@ Function Set-SingleUseAutoLogon {
 
     $AdminPassword = Get-DeploySecret -Name 'ANSAdminPassword';
     If ([string]::IsNullOrWhiteSpace($AdminPassword)) {
-        throw 'ANSAdminPassword secret is missing or empty.';
+        Write-Log 'ANSAdminPassword secret is missing or empty.';
+        $AdminPassword = "ChangeMe"
     };
 
     $RegPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon';

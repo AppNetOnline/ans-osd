@@ -3,7 +3,7 @@
 #
 # Or via startnet.cmd (set by Build-ANSWorkspace.ps1):
 #   start /wait PowerShell -NoL -C Set-ExecutionPolicy RemoteSigned -Force
-#   start /wait PowerShell -NoL -C "iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/Deploy-ANS.ps1')"
+#   start /wait PowerShell -NoL -C "iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/deploy/Deploy-ANS.ps1')"
 
 #region Initialization
 
@@ -146,6 +146,8 @@ Start-OSDCloud -OSName $OSName -OSEdition $OSEdition -OSActivation $OSActivation
 
 #region Post-OSDCloud Actions
 Write-SectionHeader -Message "OSDCloud Process Complete, Running Custom Actions From Script Before Reboot"
+
+Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/deploy/PostOS-Choco.ps1")
 
 # Lenovo module copy
 If ($Manufacturer -match "Lenovo") {
