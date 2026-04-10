@@ -14,7 +14,7 @@ ans-osd/
 ├── admin/                          ← Run on your admin workstation
 │   └── Build-ANSWorkspace.ps1      ← Builds template, workspace, WinPE, USB
 │
-├── github/                         ← Push these to your PUBLIC GitHub repo
+├── deploy/                         ← Push these to your PUBLIC GitHub repo
 │   ├── Deploy-ANS.ps1              ← StartURL target baked into WinPE
 │   ├── PostOS-Choco.ps1            ← PostOS: Chocolatey method
 │   ├── PostOS-Direct.ps1           ← PostOS: Direct URL method
