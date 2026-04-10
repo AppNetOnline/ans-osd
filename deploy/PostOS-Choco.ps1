@@ -392,7 +392,7 @@ try {
 }
 catch {
     Write-Log -Message "Fatal error: $($_.Exception.Message)" -Level 'ERROR';
-    exit 1;
+    #exit 1;
 }
 finally {
     Invoke-Cleanup;
