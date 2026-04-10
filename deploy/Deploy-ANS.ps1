@@ -63,7 +63,7 @@ function Write-SectionSuccess {
 #endregion
 
 $ScriptName    = 'Deploy-ANS.ps1'
-$ScriptVersion = '1.3.0'
+$ScriptVersion = '1.3.1'
 Write-Host -ForegroundColor Green "$ScriptName $ScriptVersion"
 
 #region Variables
