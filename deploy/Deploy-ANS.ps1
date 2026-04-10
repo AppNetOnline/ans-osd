@@ -62,10 +62,25 @@ function Write-SectionSuccess {
     Write-Host -ForegroundColor Green $Message
 }
 
-$BasePath = 'X:\OSDCloud\Temp\curl';
-$ZipPath = Join-Path $BasePath 'curl.zip';
-$ExtractPath = Join-Path $BasePath 'Extract';
 $System32 = Join-Path $env:SystemRoot 'System32';
+$CurlPath = Join-Path $System32 'curl.exe';
+
+# --- Check first ---
+if (Test-Path $CurlPath) {
+    try {
+        & $CurlPath --version | Out-Null;
+        Write-Host "curl is already available at $CurlPath" -ForegroundColor Yellow;
+        return;
+    }
+    catch {
+        Write-Warning "curl.exe exists but failed to execute. Reinstalling...";
+    }
+}
+
+# --- Install ---
+$BasePath    = 'X:\OSDCloud\Temp\curl';
+$ZipPath     = Join-Path $BasePath 'curl.zip';
+$ExtractPath = Join-Path $BasePath 'Extract';
 $DownloadUri = 'https://curl.se/windows/latest.cgi?p=win64-mingw.zip';
 
 New-Item -Path $BasePath -ItemType Directory -Force | Out-Null;
@@ -98,31 +113,25 @@ foreach ($Pattern in $RequiredFiles) {
         -Filter $Pattern `
         -ErrorAction SilentlyContinue;
 
-    if (-not $FoundFiles) {
-        Write-Warning "No files found matching: $Pattern";
-        continue;
-    }
-
     foreach ($File in $FoundFiles) {
         Copy-Item `
             -Path $File.FullName `
             -Destination (Join-Path $System32 $File.Name) `
             -Force;
 
-        Write-Host "Copied $($File.Name) to $System32" -ForegroundColor Green;
+        Write-Host "Copied $($File.Name)" -ForegroundColor Green;
     }
 }
 
-$CurlPath = Join-Path $System32 'curl.exe';
-
+# --- Validate ---
 if (-not (Test-Path $CurlPath)) {
-    throw 'curl.exe was not copied successfully';
+    throw 'curl.exe was not installed';
 }
 
-Write-Host 'Testing curl.exe ...' -ForegroundColor Cyan;
+Write-Host 'Validating curl...' -ForegroundColor Cyan;
 & $CurlPath --version;
 
-Write-Host 'curl installed in current WinPE session.' -ForegroundColor Green;
+Write-Host 'curl is ready in WinPE.' -ForegroundColor Green;
 
 #region --- OS Variables ---
 
