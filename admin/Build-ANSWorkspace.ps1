@@ -12,7 +12,7 @@
     Step 3 - Workspace         : New-OSDCloudWorkspace (copy of template to customize)
     Step 4 - WinPE             : Edit-OSDCloudWinPE (bake -StartURL, drivers, wallpaper)
     Step 5 - SetupComplete     : Copy Bootstrap.ps1 + SetupComplete.cmd to workspace
-    Step 6 - USB               : New-OSDCloudUSB (partition, format, copy media)
+    Step 6 - USB               : New-OSDCloudISO (partition, format, copy media)
     Step 7 - USB Secrets       : Remind tech to place secrets.json on USB manually
 
 .NOTES
@@ -52,7 +52,7 @@ param(
 #region --- Config ---
 
 # Template name — used to identify your build in Get-OSDCloudTemplateNames
-$TemplateName  = 'ANS-WinPE'
+$TemplateName = 'ANS-WinPE'
 
 # Your public GitHub raw base URL for Deploy-ANS.ps1
 $DeployScriptURL = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/Deploy-ANS.ps1'
@@ -72,16 +72,16 @@ $WallpaperPath = ''  # e.g. 'C:\ANS\Branding\winpe-bg.jpg'
 $LogFile = 'C:\OSDCloud\Logs\Build-ANSWorkspace.log'
 if (!(Test-Path (Split-Path $LogFile))) { New-Item (Split-Path $LogFile) -ItemType Directory -Force | Out-Null }
 
-function Write-Step {
+Function Write-Step {
     param([string]$Message, [string]$Color = 'Cyan')
     $entry = "`n$(Get-Date -Format 'HH:mm:ss') === $Message ==="
     Write-Host $entry -ForegroundColor $Color
     $entry | Out-File $LogFile -Append -Encoding utf8
-}
-function Write-Info  { param([string]$m) Write-Host "  $m" -ForegroundColor Gray;   "  $m" | Out-File $LogFile -Append -Encoding utf8 }
-function Write-OK    { param([string]$m) Write-Host "  $m" -ForegroundColor Green;  "  OK: $m" | Out-File $LogFile -Append -Encoding utf8 }
-function Write-Warn  { param([string]$m) Write-Host "  $m" -ForegroundColor Yellow; "  WARN: $m" | Out-File $LogFile -Append -Encoding utf8 }
-function Write-Fail  { param([string]$m) Write-Host "  $m" -ForegroundColor Red;    "  FAIL: $m" | Out-File $LogFile -Append -Encoding utf8 }
+};
+function Write-Info { param([string]$m) Write-Host "  $m" -ForegroundColor Gray; "  $m" | Out-File $LogFile -Append -Encoding utf8 }
+function Write-OK { param([string]$m) Write-Host "  $m" -ForegroundColor Green; "  OK: $m" | Out-File $LogFile -Append -Encoding utf8 }
+function Write-Warn { param([string]$m) Write-Host "  $m" -ForegroundColor Yellow; "  WARN: $m" | Out-File $LogFile -Append -Encoding utf8 }
+function Write-Fail { param([string]$m) Write-Host "  $m" -ForegroundColor Red; "  FAIL: $m" | Out-File $LogFile -Append -Encoding utf8 }
 
 Write-Host "`n=================================================" -ForegroundColor Cyan
 Write-Host "  ANS OSDCloud Workspace Builder" -ForegroundColor Cyan
@@ -105,13 +105,13 @@ else {
     Write-OK "OSD module present: v$osdVer"
     # Update to latest
     Write-Info "Updating OSD module to latest..."
-    Update-Module OSD -Force -ErrorAction SilentlyContinue
+    #Update-Module OSD -Force -ErrorAction SilentlyContinue
 }
 Import-Module OSD -Force
 
 # ADK check — look for oscdimg.exe which is part of the ADK Deployment Tools
 $oscdimg = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\' `
-           -Filter oscdimg.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    -Filter oscdimg.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $oscdimg) {
     Write-Fail "Windows ADK not found."
     Write-Fail "Download ADK: https://go.microsoft.com/fwlink/?linkid=2243390"
@@ -123,19 +123,19 @@ Write-OK "Windows ADK found: $($oscdimg.FullName)"
 
 # WinPE Addon check
 $winpeAdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Windows Preinstallation Environment\' `
-            -ErrorAction SilentlyContinue
+    -ErrorAction SilentlyContinue
 if (-not $winpeAdk) {
     Write-Fail "WinPE Addon for ADK not found."
     Write-Fail "Download: https://go.microsoft.com/fwlink/?linkid=2243391"
     exit 1
-}
+};
 Write-OK "WinPE Addon found."
 
 if ($UpdateUSBOnly) {
     Write-Info "-UpdateUSBOnly specified — skipping template and workspace build."
     $SkipTemplate = $true
     $SkipWorkspace = $true
-}
+};
 
 #endregion
 
@@ -146,7 +146,7 @@ if ($UpdateUSBOnly) {
 
 Write-Step "Step 2: OSDCloud Template"
 
-if ($SkipTemplate) {
+If ($SkipTemplate) {
     $currentTemplate = Get-OSDCloudTemplate -ErrorAction SilentlyContinue
     Write-Info "Skipping template build. Current template: $currentTemplate"
 }
@@ -181,16 +181,16 @@ Write-OK "Active template: $activeTemplate"
 
 Write-Step "Step 3: OSDCloud Workspace"
 
-if ($SkipWorkspace) {
+If ($SkipWorkspace) {
     Write-Info "Skipping workspace build."
     Set-OSDCloudWorkspace -WorkspacePath $WorkspacePath | Out-Null
 }
-else {
-    if (Test-Path $WorkspacePath) {
+Else {
+    If (Test-Path $WorkspacePath) {
         Write-Warn "Workspace path already exists: $WorkspacePath"
         Write-Info "Setting as active workspace. Use -SkipWorkspace to suppress this warning."
     }
-    else {
+    Else {
         Write-Info "Creating workspace at $WorkspacePath..."
         New-OSDCloudWorkspace -WorkspacePath $WorkspacePath
 
@@ -201,18 +201,18 @@ else {
 
     # Trim unnecessary language folders to reduce ISO/USB size
     Write-Info "Trimming non-English language files..."
-    $keepDirs = @('boot','efi','en-us','sources','fonts','resources')
+    $keepDirs = @('boot', 'efi', 'en-us', 'sources', 'fonts', 'resources')
     $mediaDirs = @(
         "$WorkspacePath\Media",
         "$WorkspacePath\Media\Boot",
         "$WorkspacePath\Media\EFI\Microsoft\Boot"
     )
-    foreach ($dir in $mediaDirs) {
-        if (Test-Path $dir) {
+    ForEach ($dir in $mediaDirs) {
+        If (Test-Path $dir) {
             Get-ChildItem $dir | Where-Object { $_.PSIsContainer -and $_.Name -notin $keepDirs } |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        };
+    };
     Write-OK "Language trim complete."
 }
 
@@ -231,20 +231,20 @@ Write-Info "This mounts, modifies, and unmounts boot.wim — takes several minut
 Write-Warn "Edit-OSDCloudWinPE resets startnet.cmd on every run. All params must be in one call."
 
 $editParams = @{
-    StartURL       = $DeployScriptURL
-    CloudDriver    = $CloudDrivers
-    WorkspacePath  = $activeWorkspace
-}
+    StartURL      = $DeployScriptURL
+    CloudDriver   = $CloudDrivers
+    WorkspacePath = $activeWorkspace
+};
 
 # Add wallpaper if specified and exists
-if ($WallpaperPath -and (Test-Path $WallpaperPath)) {
+If ($WallpaperPath -and (Test-Path $WallpaperPath)) {
     $editParams.Wallpaper = Get-Item $WallpaperPath
     Write-Info "Wallpaper: $WallpaperPath"
 }
-else {
+Else {
     $editParams.UseDefaultWallpaper = $true
     if ($WallpaperPath) { Write-Warn "Wallpaper not found at '$WallpaperPath' — using default." }
-}
+};
 
 Write-Info "Parameters being applied:"
 Write-Info "  -StartURL      : $DeployScriptURL"
@@ -259,7 +259,7 @@ Write-OK "WinPE configuration complete."
 
 #region --- Step 5: Stage SetupComplete Files in Workspace ---
 # Files placed here are automatically copied to the USB \OSDCloud\Config\Scripts\SetupComplete\
-# when you run New-OSDCloudUSB or Update-OSDCloudUSB.
+# when you run New-OSDCloudISO or Update-OSDCloudUSB.
 # OSDCloud then automatically copies them to C:\OSDCloud\Scripts\SetupComplete\
 # on the target machine and wires SetupComplete.cmd.
 
@@ -268,10 +268,10 @@ Write-Step "Step 5: Staging SetupComplete Files in Workspace"
 # Correct workspace path for SetupComplete content that ends up on the USB NTFS partition
 $setupCompleteDest = "$activeWorkspace\OSDCloud\Config\Scripts\SetupComplete"
 
-if (!(Test-Path $setupCompleteDest)) {
+If (!(Test-Path $setupCompleteDest)) {
     New-Item $setupCompleteDest -ItemType Directory -Force | Out-Null
     Write-OK "Created: $setupCompleteDest"
-}
+};
 
 # --- SetupComplete.cmd ---
 $setupCompleteCmd = @'
@@ -299,7 +299,7 @@ param([string]$SetupCompleteDir = $PSScriptRoot)
 # ============================================================
 # EDIT THIS: Your public GitHub raw base URL
 # ============================================================
-$GitHubBaseURL = 'https://raw.githubusercontent.com/your-org/ans-osd/main'
+$GitHubBaseURL = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main'
 
 # 'Chocolatey' or 'Direct'
 $PostOSMethod = 'Chocolatey'
@@ -433,14 +433,14 @@ Write-Host "  WARNING: The selected drive will be completely wiped." -Foreground
 $createUSB = Read-Host "`n  Create USB now? [Y/N]"
 
 if ($createUSB -eq 'Y') {
-    Write-Info "Launching New-OSDCloudUSB — select your USB disk number when prompted..."
-    New-OSDCloudUSB -WorkspacePath $activeWorkspace
+    Write-Info "Launching New-OSDCloudISO — select your USB disk number when prompted..."
+    New-OSDCloudISO -WorkspacePath $activeWorkspace
     Write-OK "USB creation complete."
 }
 else {
     Write-Info "USB creation skipped. To create USB later:"
     Write-Info "  Set-OSDCloudWorkspace -WorkspacePath '$WorkspacePath'"
-    Write-Info "  New-OSDCloudUSB"
+    Write-Info "  New-OSDCloudISO"
 }
 
 #endregion
@@ -463,7 +463,7 @@ Write-Host @"
        - manifest.json
 
   3. Update Bootstrap.ps1 on the USB with your real GitHub URL
-       Current placeholder: 'https://raw.githubusercontent.com/your-org/ans-osd/main'
+       Current placeholder: 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main'
 
   TO UPDATE SCRIPTS (no USB rebuild needed):
   ─────────────────────────────────────────────────────────────

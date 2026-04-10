@@ -49,9 +49,9 @@ $Product      = (Get-MyComputerProduct)
 $Model        = (Get-MyComputerModel)
 $Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
 $OSVersion    = 'Windows 11'
-$OSReleaseID  = '24H2'
+$OSReleaseID  = '25H2'
 $OSName       = 'Windows 11 24H2 x64'
-$OSEdition    = 'Enterprise'
+$OSEdition    = 'Pro'
 $OSActivation = 'Volume'
 $OSLanguage   = 'en-us'
 
@@ -73,7 +73,7 @@ $Global:MyOSDCloud = [ordered]@{
     ShutdownSetupComplete = [bool]$false    # Restart (not shutdown) after SetupComplete
     SyncMSUpCatDriverUSB  = [bool]$true     # Sync MS Update Catalog drivers from USB if present
     CheckSHA1             = [bool]$true     # Verify OS image SHA1 hash before applying
-}
+};
 
 #endregion
 
@@ -88,7 +88,7 @@ if ($DriverPack) {
 
 #region --- Vendor-Specific Pre-OS Actions ---
 
-if (Test-HPIASupport) {
+If (Test-HPIASupport) {
     Write-SectionHeader "Detected HP Device — Enabling HPIA, BIOS and TPM Updates"
     $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
     $Global:MyOSDCloud.HPBIOSUpdate = [bool]$true
@@ -96,15 +96,15 @@ if (Test-HPIASupport) {
     if ($Product -ne '83B2' -and $Model -notmatch 'zbook') {
         $Global:MyOSDCloud.HPIAALL = [bool]$true
     }
-    iex (irm https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1)
+    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1")
     Manage-HPBiosSettings -SetSettings
 }
 
-if ($Manufacturer -match 'Lenovo') {
+If ($Manufacturer -match 'Lenovo') {
     Write-SectionHeader "Detected Lenovo Device — Applying BIOS Settings"
-    iex (irm https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1)
+    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1")
     try { Manage-LenovoBIOSSettings -SetSettings } catch {}
-}
+};
 
 #endregion
 
