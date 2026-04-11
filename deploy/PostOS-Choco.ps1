@@ -4,36 +4,6 @@
 Set-StrictMode -Version Latest;
 $ErrorActionPreference = 'Stop';
 
-<#
-.SYNOPSIS
-    OSDCloud post-OS deployment script using Chocolatey.
-
-.DESCRIPTION
-    Hosted on GitHub and downloaded/executed by Bootstrap.ps1 during first boot.
-    Runs during SetupComplete in SYSTEM context before OOBE.
-
-    This script performs the following actions:
-      1. Loads deployment secrets from secrets.json
-      2. Configures Microsoft.PowerShell.SecretStore
-      3. Creates or updates the ANSAdmin local administrator account
-      4. Configures single-use auto-logon
-      5. Writes C:\Windows\Panther\Unattend.xml
-      6. Installs Chocolatey
-      7. Installs standard applications
-      8. Performs cleanup and removes sensitive data from disk
-
-.ParamETER SetupCompleteDir
-    Path to the SetupComplete working directory where secrets.json resides.
-    This is passed by Bootstrap.ps1. If not provided, defaults to $PSScriptRoot.
-
-.NOTES
-    Author    : Jarod Roberts
-    Company   : Appalachian Network Services
-    GitHub    : https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/deploy/PostOS-Choco.ps1
-    Context   : SetupComplete phase (SYSTEM), runs before OOBE
-    Secrets   : Reads secrets.json from the SetupComplete directory
-#>
-
 Param(
     [Parameter(Mandatory = $False)]
     [string]$SetupCompleteDir = $PSScriptRoot
@@ -177,127 +147,6 @@ Function Get-DeploySecret {
     }
 };
 
-Function Set-ANSAdminAccount {
-    [CmdletBinding()]
-    Param()
-
-    Write-Log -Message 'Creating ANSAdmin local administrator...';
-
-    $AdminPassword = Get-DeploySecret -Name 'ANSAdminPassword';
-    If ([string]::IsNullOrWhiteSpace($AdminPassword)) {
-        throw 'ANSAdminPassword secret is missing or empty.';
-    };
-
-    $SecurePassword = ConvertTo-SecureString -String $AdminPassword -AsPlainText -Force;
-
-    $ExistingUser = Get-LocalUser -Name 'ANSAdmin' -ErrorAction SilentlyContinue;
-    If ($Null -ne $ExistingUser) {
-        Write-Log -Message 'ANSAdmin exists, updating password.' -Level 'WARN';
-        $ExistingUser | Set-LocalUser -Password $SecurePassword;
-        Enable-LocalUser -Name 'ANSAdmin';
-    }
-    Else {
-        New-LocalUser `
-            -Name 'ANSAdmin' `
-            -Password $SecurePassword `
-            -FullName 'ANS Administrator' `
-            -Description 'Managed local admin - ANS' `
-            -PasswordNeverExpires `
-            -AccountNeverExpires `
-            -ErrorAction Stop | Out-Null;
-
-        Write-Log -Message 'ANSAdmin created.' -Level 'SUCCESS';
-    }
-
-    $Members = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue;
-    If ($Members.Name -notcontains "$($env:COMPUTERNAME)\ANSAdmin") {
-        Add-LocalGroupMember -Group 'Administrators' -Member 'ANSAdmin' -ErrorAction Stop;
-        Write-Log -Message 'ANSAdmin added to Administrators.' -Level 'SUCCESS';
-    };
-};
-
-Function Set-SingleUseAutoLogon {
-    [CmdletBinding()]
-    Param()
-
-    Write-Log -Message 'Configuring single-use auto-logon...';
-
-    $AdminPassword = Get-DeploySecret -Name 'ANSAdminPassword';
-    If ([string]::IsNullOrWhiteSpace($AdminPassword)) {
-        Write-Log 'ANSAdminPassword secret is missing or empty.';
-        $AdminPassword = "ChangeMe"
-    };
-
-    $RegPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon';
-
-    Set-ItemProperty -Path $RegPath -Name 'AutoAdminLogon'    -Value '1'                 -Type String;
-    Set-ItemProperty -Path $RegPath -Name 'DefaultUserName'   -Value 'ANSAdmin'          -Type String;
-    Set-ItemProperty -Path $RegPath -Name 'DefaultPassword'   -Value $AdminPassword      -Type String;
-    Set-ItemProperty -Path $RegPath -Name 'DefaultDomainName' -Value $env:COMPUTERNAME   -Type String;
-    Set-ItemProperty -Path $RegPath -Name 'AutoLogonCount'    -Value 1                   -Type DWord;
-
-    Write-Log -Message 'Auto-logon configured for one use.' -Level 'SUCCESS';
-};
-
-Function Set-UnattendFile {
-    [CmdletBinding()]
-    Param()
-
-    Write-Log -Message 'Writing unattend.xml...';
-
-    $PantherDir = Split-Path -Path $Script:UnattendPath -Parent;
-    If (-not (Test-Path -Path $PantherDir)) {
-        New-Item -Path $PantherDir -ItemType Directory -Force | Out-Null;
-    };
-
-    $UnattendXml = @"
-<?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
-  <settings pass="specialize">
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
-      publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
-      xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-      <ComputerName>*</ComputerName>
-      <TimeZone>$TimeZone</TimeZone>
-      <RegisteredOrganization>ANS</RegisteredOrganization>
-      <RegisteredOwner>ANSAdmin</RegisteredOwner>
-    </component>
-  </settings>
-  <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64"
-      publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
-      xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UILanguageFallback>en-US</UILanguageFallback>
-      <UserLocale>en-US</UserLocale>
-    </component>
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
-      publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
-      xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-      <OOBE>
-        <HideEULAPage>true</HideEULAPage>
-        <HideLocalAccountScreen>true</HideLocalAccountScreen>
-        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-        <ProtectYourPC>3</ProtectYourPC>
-        <SkipMachineOOBE>true</SkipMachineOOBE>
-        <SkipUserOOBE>true</SkipUserOOBE>
-      </OOBE>
-      <TimeZone>$TimeZone</TimeZone>
-    </component>
-  </settings>
-</unattend>
-"@;
-
-    $UnattendXml | Out-File -FilePath $Script:UnattendPath -Encoding utf8 -Width 2000 -Force;
-    Write-Log -Message 'Unattend.xml written.' -Level 'SUCCESS';
-};
-
 Function Install-Chocolatey {
     [CmdletBinding()]
     Param()
@@ -384,9 +233,6 @@ try {
     Write-Log -Message 'Secrets loaded.' -Level 'SUCCESS';
 
     Initialize-SecretStoreVault -Secrets $Secrets;
-    Set-ANSAdminAccount;
-    Set-SingleUseAutoLogon;
-    Set-UnattendFile;
     Install-Chocolatey;
     Install-ChocoPackages;
 }
