@@ -4,23 +4,23 @@ Set-StrictMode -Version Latest;
 $ErrorActionPreference = 'Stop';
 Function Get-UnattendTemplate {
     [CmdletBinding()]
-    param (
+    Param (
         [Parameter(Mandatory = $True)]
         [ValidateNotNullOrEmpty()]
         [System.String]
         $TemplateUrl
-    )
+    );
 
-    $Response = Invoke-RestMethod `
+    $Response = Invoke-WebRequest `
         -Uri $TemplateUrl `
-        -Method Get `
+        -UseBasicParsing `
         -ErrorAction Stop;
 
-    If ([System.String]::IsNullOrWhiteSpace([System.String] $Response)) {
+    If ([System.String]::IsNullOrWhiteSpace($Response.Content)) {
         throw 'The unattend template download returned empty content.';
-    };
+    }
 
-    Return [System.String] $Response;
+    Return [System.String] $Response.Content;
 };
 
 Function New-UnattendFromTemplate {
