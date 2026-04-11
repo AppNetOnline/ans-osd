@@ -17,14 +17,13 @@ Function Write-DarkGrayDate {
         [System.String]
         $Message
     )
-    Importf ($Message) {
+    If ($Message) {
         Write-Host -ForegroundColor DarkGray "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) $Message"
     }
     Else {
         Write-Host -ForegroundColor DarkGray "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) " -NoNewline
     }
 };
-
 Function Write-DarkGrayHost {
     [CmdletBinding()]
     Param (
@@ -64,7 +63,7 @@ Function Write-SectionSuccess {
 #endregion
 
 $ScriptName    = 'Deploy-ANS.ps1'
-$ScriptVersion = '1.3.2'
+$ScriptVersion = '1.4.0'
 Write-Host -ForegroundColor Green "$ScriptName $ScriptVersion"
 
 #region Variables
@@ -87,10 +86,10 @@ $Global:MyOSDCloud = [ordered]@{
     Restart               = [bool]$False
     RecoveryPartition     = [bool]$True
     OEMActivation         = [bool]$True
-    WindowsUpdate         = [bool]$True
-    WindowsUpdateDrivers  = [bool]$True
-    WindowsDefenderUpdate = [bool]$True
-    SetTimeZone           = [bool]$True
+    WindowsUpdate         = [bool]$False
+    WindowsUpdateDrivers  = [bool]$False
+    WindowsDefenderUpdate = [bool]$False
+    SetTimeZone           = [bool]$False
     ClearDiskConfirm      = [bool]$False
     ShutdownSetupComplete = [bool]$false
     SyncMSUpCatDriverUSB  = [bool]$True
