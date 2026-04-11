@@ -4,11 +4,6 @@
 Set-StrictMode -Version Latest;
 $ErrorActionPreference = 'Stop';
 
-Param(
-    [Parameter(Mandatory = $False)]
-    [string]$SetupCompleteDir = $PSScriptRoot
-)
-
 #region --- Variables ---
 
 $Script:LogDir = 'C:\OSDCloud\Logs';
