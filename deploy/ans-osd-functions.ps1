@@ -23,41 +23,6 @@ Function Get-UnattendTemplate {
     Return [System.String] $Response;
 };
 
-Function Get-SecretsData {
-    [CmdletBinding()]
-    Param (
-        [Parameter(Mandatory = $True)]
-        [ValidateNotNullOrEmpty()]
-        [System.String]
-        $SecretsPath
-    )
-
-    If (-Not (Test-Path -LiteralPath $SecretsPath)) {
-        throw "Secrets file not found: $SecretsPath";
-    };
-
-    $Json = Get-Content `
-        -LiteralPath $SecretsPath `
-        -Raw `
-        -ErrorAction Stop;
-
-    If ([System.String]::IsNullOrWhiteSpace($Json)) {
-        throw "Secrets file is empty: $SecretsPath";
-    };
-
-    $Secrets = $Json | ConvertFrom-Json -ErrorAction Stop;
-
-    If ([System.String]::IsNullOrWhiteSpace($Secrets.AdministratorUser)) {
-        throw 'Secrets file is missing AdministratorUser.';
-    };
-
-    If ([System.String]::IsNullOrWhiteSpace($Secrets.AdministratorPassword)) {
-        throw 'Secrets file is missing AdministratorPassword.';
-    };
-
-    Return $Secrets;
-};
-
 Function New-UnattendFromTemplate {
     [CmdletBinding()]
     Param (
@@ -68,26 +33,25 @@ Function New-UnattendFromTemplate {
 
         [Parameter(Mandatory = $True)]
         [ValidateNotNull()]
-        [System.Object]
+        [System.Collections.IDictionary]
         $Secrets
-    )
+    );
 
     $UnattendContent = $TemplateContent;
 
     $ReplacementMap = @{
-        '{AdminUserName}' = [System.String] $Secrets.AdministratorUser;
-        '{Password}'      = [System.String] $Secrets.AdministratorPassword;
+        '{AdminUserName}' = [System.String] $Secrets['AdministratorUser'];
+        '{Password}'      = [System.String] $Secrets['AdministratorPassword'];
     };
 
-    Foreach ($Placeholder in $ReplacementMap.Keys) {
-        $Value = $ReplacementMap[$Placeholder];
+    ForEach ($Key in $ReplacementMap.Keys) {
+        $Value = $ReplacementMap[$Key];
 
-        If ($UnattendContent -notmatch [regex]::Escape($Placeholder)) {
-            Write-Warning "Placeholder not found in template: $Placeholder";
-            continue;
+        If ([System.String]::IsNullOrWhiteSpace($Value)) {
+            throw "Replacement value for $Key is empty.";
         };
 
-        $UnattendContent = $UnattendContent.Replace($Placeholder, $Value);
+        $UnattendContent = $UnattendContent.Replace($Key, $Value);
     };
 
     Return $UnattendContent;
@@ -130,35 +94,28 @@ Function New-ConfiguredUnattendFile {
         $TemplateUrl,
 
         [Parameter(Mandatory = $True)]
-        [ValidateNotNullOrEmpty()]
-        [System.String]
-        $SecretsPath,
+        [ValidateNotNull()]
+        [System.Collections.IDictionary]
+        $Secrets,
 
         [Parameter(Mandatory = $True)]
         [ValidateNotNullOrEmpty()]
         [System.String]
         $OutputPath
-    )
+    );
 
-    Write-Host "Downloading unattend template from: $TemplateUrl";
     $TemplateContent = Get-UnattendTemplate -TemplateUrl $TemplateUrl;
 
-    Write-Host "Loading secrets from: $SecretsPath";
-    $Secrets = Get-SecretsData -SecretsPath $SecretsPath;
-
-    Write-Host 'Replacing unattend placeholders';
     $ConfiguredUnattend = New-UnattendFromTemplate `
         -TemplateContent $TemplateContent `
         -Secrets $Secrets;
 
-    Write-Host "Saving unattend file to: $OutputPath";
     Save-UnattendFile `
         -Content $ConfiguredUnattend `
         -OutputPath $OutputPath;
 
     Return [PSCustomObject]@{
         TemplateUrl = $TemplateUrl;
-        SecretsPath = $SecretsPath;
         OutputPath  = $OutputPath;
         Success     = $True;
     };
