@@ -161,4 +161,4 @@ If ($Manufacturer -match "Lenovo") {
 #endregion
 
 #Restart
-Restart-Computer -Force
+#Restart-Computer -Force
