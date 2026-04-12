@@ -146,8 +146,6 @@ Start-OSDCloud -OSName $OSName -OSEdition $OSEdition -OSActivation $OSActivation
 #region Post-OSDCloud Actions
 Write-SectionHeader -Message "OSDCloud Process Complete, Running Custom Actions From Script Before Reboot"
 
-Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/deploy/PostOS-Choco.ps1")
-
 # Lenovo module copy
 If ($Manufacturer -match "Lenovo") {
     $PowerShellSavePath = 'C:\Program Files\WindowsPowerShell'
