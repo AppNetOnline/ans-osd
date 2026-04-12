@@ -18,7 +18,25 @@ $ErrorActionPreference = 'SilentlyContinue'
 #  DEPLOYMENT CONFIGURATION — edit these values before deploying
 # ─────────────────────────────────────────────────────────────────────────────
 $DeployConfig = @{
-    Restart               = [bool]$False
+    # ── Start-OSDCloud string parameters ──────────────────────────────────────
+    OSName                = ''          # Full name e.g. "Windows 11 23H2 x64" — leave blank to let OSDCloud prompt
+    OSEdition             = 'Pro'       # Home | Pro | Enterprise | Education
+    OSLanguage            = 'en-us'
+    OSActivation          = ''          # Retail | Volume — leave blank for default
+    Manufacturer          = ''          # e.g. 'Dell' — leave blank for auto-detect
+    Product               = ''          # e.g. 'Latitude 5540' — leave blank for auto-detect
+
+    # ── Start-OSDCloud switch parameters ──────────────────────────────────────
+    ZTI                   = $True      # Zero Touch — suppresses all OSDCloud prompts
+    SkipAutopilot         = $True      # Skip Autopilot hash collection
+    Restart               = $False     # Restart after deployment
+    Shutdown              = $False     # Shutdown after deployment
+    Firmware              = $False     # Apply firmware updates
+    Screenshot            = $False     # Capture screenshots during deployment
+    SkipODT               = $False     # Skip Office Deployment Tool
+    Preview               = $False     # Use preview/insider images
+
+    # ── $Global:MyOSDCloud behaviour keys (not passed to Start-OSDCloud) ──────
     RecoveryPartition     = [bool]$True
     OEMActivation         = [bool]$True
     WindowsUpdate         = [bool]$False
@@ -26,16 +44,9 @@ $DeployConfig = @{
     WindowsDefenderUpdate = [bool]$False
     SetTimeZone           = [bool]$False
     ClearDiskConfirm      = [bool]$False
-    ShutdownSetupComplete = [bool]$false
+    ShutdownSetupComplete = [bool]$False
     SyncMSUpCatDriverUSB  = [bool]$True
     CheckSHA1             = [bool]$True
-    OSVersion             = 'Windows 11'   # Windows 11 or Windows 11
-    OSEdition             = 'Pro'       # Home | Pro | Enterprise | Education
-    OSLanguage            = 'en-us'
-    OSArch                = 'x64'
-    ZTI                   = $True       # Zero Touch — suppresses all OSDCloud prompts
-    SkipAutoPilot         = $True
-    DriverPack            = $False      # $True for HP/Dell/Lenovo auto driver packs
 };
 
 # Build $Global:MyOSDCloud from $DeployConfig so Start-OSDCloud picks up the same values
@@ -612,13 +623,23 @@ Function Start-DeploymentRunspace {
                 #  REAL OSDCLOUD — uncomment this, comment out test block above
                 # ══════════════════════════════════════════════════════════════
 
-                $Params = @{
-                    OSVersion     = $Config.OSVersion
-                    OSEdition     = $Config.OSEdition
-                    OSLanguage    = $Config.OSLanguage
-                    OSArch        = $Config.OSArch
-                    ZTI           = $Config.ZTI
-                    SkipAutoPilot = $Config.SkipAutoPilot
+                # ── Build params using only Start-OSDCloud's supported parameter set ──
+                $Params = @{}
+
+                # String params — included only when the config key exists and is non-empty
+                $StringParams = @('OSName', 'OSEdition', 'OSLanguage', 'OSActivation', 'Manufacturer', 'Product')
+                ForEach ($key in $StringParams) {
+                    If ($Config.ContainsKey($key) -and $Config[$key]) { 
+                        $Params[$key] = $Config[$key] 
+                    };
+                };
+
+                # Switch params — included only when explicitly $True
+                $SwitchParams = @('ZTI', 'SkipAutopilot', 'Restart', 'Shutdown', 'Firmware', 'Screenshot', 'SkipODT', 'Preview')
+                ForEach ($key in $SwitchParams) {
+                    If ($Config.ContainsKey($key) -and [bool]$Config[$key]) { 
+                        $Params[$key] = $True 
+                    };
                 };
 
                 $VerbosePreference = 'Continue'
