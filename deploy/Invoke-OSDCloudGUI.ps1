@@ -38,6 +38,51 @@ $DeployConfig = @{
     DriverPack            = $False      # $True for HP/Dell/Lenovo auto driver packs
 };
 
+# Build $Global:MyOSDCloud from $DeployConfig so Start-OSDCloud picks up the same values
+$Global:MyOSDCloud = [ordered]@{
+    Restart               = [bool]$DeployConfig.Restart
+    RecoveryPartition     = [bool]$DeployConfig.RecoveryPartition
+    OEMActivation         = [bool]$DeployConfig.OEMActivation
+    WindowsUpdate         = [bool]$DeployConfig.WindowsUpdate
+    WindowsUpdateDrivers  = [bool]$DeployConfig.WindowsUpdateDrivers
+    WindowsDefenderUpdate = [bool]$DeployConfig.WindowsDefenderUpdate
+    SetTimeZone           = [bool]$DeployConfig.SetTimeZone
+    ClearDiskConfirm      = [bool]$DeployConfig.ClearDiskConfirm
+    ShutdownSetupComplete = [bool]$DeployConfig.ShutdownSetupComplete
+    SyncMSUpCatDriverUSB  = [bool]$DeployConfig.SyncMSUpCatDriverUSB
+    CheckSHA1             = [bool]$DeployConfig.CheckSHA1
+};
+
+
+$Product = (Get-MyComputerProduct)
+$Model = (Get-MyComputerModel)
+$Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
+
+$DriverPack = Get-OSDCloudDriverPack -Product $DeployConfig.Product -OSVersion $DeployConfig.OSVersion -OSReleaseID $DeployConfig.OSReleaseID
+
+If ($DriverPack) {
+    $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
+};
+
+If (Test-HPIASupport) {
+    Write-SectionHeader -Message "Detected HP Device, Enabling HPIA, HP BIOS and HP TPM Updates"
+    $Global:MyOSDCloud.HPTPMUpdate = [bool]$True
+    $Global:MyOSDCloud.HPBIOSUpdate = [bool]$True
+    If ($Product -ne '83B2' -and $Model -notmatch "zbook") {
+        $Global:MyOSDCloud.HPIAALL = [bool]$True
+    };
+    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1")
+    Manage-HPBiosSettings -SetSettings
+};
+
+If ($Manufacturer -match "Lenovo") {
+    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1")
+    try {
+        Manage-LenovoBIOSSettings -SetSettings
+    }
+    catch {}
+};
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -54,8 +99,7 @@ Add-Type -AssemblyName System.Windows.Forms
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="ANS OSDCloud Deployment Console"
-    Height="700" Width="1080"
-    WindowStartupLocation="CenterScreen"
+    WindowStartupLocation="Manual"
     WindowStyle="None"
     AllowsTransparency="True"
     Background="Transparent"
@@ -129,13 +173,46 @@ Add-Type -AssemblyName System.Windows.Forms
                         </StackPanel>
                     </StackPanel>
 
-                    <!-- Status -->
+                    <!-- Status + Minimize -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                         <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#333333" Margin="0,0,8,0"/>
                         <TextBlock x:Name="TxtStatusLabel"
                                    Text="Initializing"
                                    FontFamily="Cascadia Code, Consolas"
-                                   FontSize="12" Foreground="#555555"/>
+                                   FontSize="12" Foreground="#555555"
+                                   Margin="0,0,16,0"/>
+                        <Button x:Name="BtnMinimize"
+                                Content="&#x2212;"
+                                Width="26" Height="26"
+                                Cursor="Hand"
+                                ToolTip="Minimize"
+                                FontFamily="Segoe UI" FontSize="14"
+                                Foreground="#555555"
+                                Background="Transparent"
+                                BorderThickness="0">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd"
+                                                        Background="{TemplateBinding Background}"
+                                                        CornerRadius="4">
+                                                    <ContentPresenter HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#1E1E1E"/>
+                                                        <Setter Property="Foreground" Value="#C8C8C8"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -258,6 +335,16 @@ $TxtProgress = Get-Control 'TxtProgress'
 $TxtPercent = Get-Control 'TxtPercent'
 $ProgressFill = Get-Control 'ProgressFill'
 $TxtClock = Get-Control 'TxtClock'
+$BtnMinimize = Get-Control 'BtnMinimize'
+
+# Fit window to working area (respects taskbar)
+$workArea = [System.Windows.SystemParameters]::WorkArea
+$Window.Left = $workArea.Left
+$Window.Top = $workArea.Top
+$Window.Width = $workArea.Width
+$Window.Height = $workArea.Height
+
+$BtnMinimize.Add_Click({ $Window.WindowState = 'Minimized' })
 
 # Fix .NET Framework RichTextBox PageWidth — prevents vertical character-per-line rendering
 $RtbLog.Document.PageWidth = 2000
@@ -365,8 +452,7 @@ Function Get-ProgressHint {
     $l = $Line.ToLower()
     ForEach ($key in $script:ProgressMap.Keys) {
         If ($l -match [regex]::Escape($key)) {
-            y
-            Return $script:ProgressMap[$key] 
+            Return $script:ProgressMap[$key]
         };
     };
     Return $Null
@@ -411,7 +497,10 @@ $DispatchTimer.Start()
 #  RUNSPACE — OSDCloud runs here, never blocks the UI thread
 # ─────────────────────────────────────────────────────────────────────────────
 Function Start-DeploymentRunspace {
-    Param([hashtable]$Config)
+    Param(
+        [hashtable]
+        $Config
+    )
 
     $script:IsDeploying = $True
 
@@ -421,6 +510,7 @@ Function Start-DeploymentRunspace {
     $rs.Open()
     $rs.SessionStateProxy.SetVariable('Config', $Config)
     $rs.SessionStateProxy.SetVariable('MessageQueue', $script:MessageQueue)
+    $rs.SessionStateProxy.SetVariable('MyOSDCloud', $Global:MyOSDCloud)
 
     $ps = [System.Management.Automation.PowerShell]::Create()
     $ps.Runspace = $rs
@@ -431,6 +521,9 @@ Function Start-DeploymentRunspace {
                 Param([string]$Text, [string]$Type = 'line')
                 $MessageQueue.Enqueue(@{ Type = $Type; Text = $Text })
             };
+
+            # Make $Global:MyOSDCloud available in this runspace so Start-OSDCloud can read it
+            $Global:MyOSDCloud = $MyOSDCloud
 
             try {
                 Enqueue 'ANS OSDCloud Deployment Console'
@@ -527,28 +620,6 @@ Function Start-DeploymentRunspace {
                     ZTI           = $Config.ZTI
                     SkipAutoPilot = $Config.SkipAutoPilot
                 };
-
-                $Params = @{
-                    OSVersion  = $Config.OSVersion
-                    OSEdition  = $Config.OSEdition
-                    OSLanguage = $Config.OSLanguage
-                    OSArch     = $Config.OSArch
-                };
-
-                $OptionalKeys = @(
-                    'ZTI', 'SkipAutoPilot', 'Restart', 'RecoveryPartition', 'OEMActivation',
-                    'WindowsUpdate', 'WindowsUpdateDrivers', 'WindowsDefenderUpdate',
-                    'SetTimeZone', 'ClearDiskConfirm', 'ShutdownSetupComplete',
-                    'SyncMSUpCatDriverUSB', 'CheckSHA1'
-                );
-
-                ForEach ($Key in $OptionalKeys) {
-                    If ($Config.PSObject.Properties[$Key]) {
-                        $Params[$Key] = [bool]$Config.$Key
-                    };
-                };
-
-                If ($Config.DriverPack) { $Params['DriverPack'] = $True }
 
                 $VerbosePreference = 'Continue'
                 Start-OSDCloud @Params *>&1 | ForEach-Object {
