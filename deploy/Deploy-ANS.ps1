@@ -62,21 +62,21 @@ Function Write-SectionSuccess {
 
 #endregion
 
-$ScriptName    = 'Deploy-ANS.ps1'
+$ScriptName = 'Deploy-ANS.ps1'
 $ScriptVersion = '1.4.0'
 Write-Host -ForegroundColor Green "$ScriptName $ScriptVersion"
 
 #region Variables
 
-$Product      = (Get-MyComputerProduct)
-$Model        = (Get-MyComputerModel)
+$Product = (Get-MyComputerProduct)
+$Model = (Get-MyComputerModel)
 $Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
-$OSVersion    = 'Windows 11'   # Used to determine driver pack
-$OSReleaseID  = '25H2'         # Used to determine driver pack
-$OSName       = 'Windows 11 24H2 x64'
-$OSEdition    = 'Pro'
+$OSVersion = 'Windows 11'   # Used to determine driver pack
+$OSReleaseID = '25H2'         # Used to determine driver pack
+$OSName = 'Windows 11 24H2 x64'
+$OSEdition = 'Pro'
 $OSActivation = 'Volume'
-$OSLanguage   = 'en-us'
+$OSLanguage = 'en-us'
 
 #endregion
 
@@ -112,7 +112,7 @@ If ($DriverPack) {
 
 If (Test-HPIASupport) {
     Write-SectionHeader -Message "Detected HP Device, Enabling HPIA, HP BIOS and HP TPM Updates"
-    $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
+    $Global:MyOSDCloud.HPTPMUpdate = [bool]$True
     $Global:MyOSDCloud.HPBIOSUpdate = [bool]$True
     If ($Product -ne '83B2' -and $Model -notmatch "zbook") {
         $Global:MyOSDCloud.HPIAALL = [bool]$True

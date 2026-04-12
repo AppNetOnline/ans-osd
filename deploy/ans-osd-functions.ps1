@@ -18,7 +18,7 @@ Function Get-UnattendTemplate {
 
     If ([System.String]::IsNullOrWhiteSpace($Response.Content)) {
         throw 'The unattend template download returned empty content.';
-    }
+    };
 
     Return [System.String] $Response.Content;
 };
