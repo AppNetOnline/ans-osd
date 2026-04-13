@@ -20,8 +20,6 @@ $ChocoPackages = @(
     'notepadplusplus'
 );
 
-$TimeZone = 'Eastern Standard Time';
-
 #endregion
 
 #region --- Functions ---
@@ -116,7 +114,7 @@ Function Initialize-SecretStoreVault {
     };
 
     $SecretMap = @{
-        ANSAdminPassword        = $Secrets.ANSAdminPassword
+        AdministratorPassword   = $Secrets.AdministratorPassword
         SentinelOneToken        = $Secrets.SentinelOneToken
         SentinelOneInstallerURL = $Secrets.SentinelOneInstallerURL
         CWAServerURL            = $Secrets.CWAServerURL
