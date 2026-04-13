@@ -64,6 +64,8 @@ $Global:MyOSDCloud = [ordered]@{
     CheckSHA1             = [bool]$DeployConfig.CheckSHA1
 };
 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -502,7 +504,6 @@ Function Start-DeploymentRunspace {
             $RawLogPath = "$env:TEMP\ANS-OSDCloud-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
             $RawLog = [System.IO.StreamWriter]::new($RawLogPath, $False, [System.Text.Encoding]::UTF8)
             $RawLog.AutoFlush = $True
-            
 
             Function Enqueue {
                 Param([string]$Text, [string]$Type = 'line')
@@ -512,60 +513,7 @@ Function Start-DeploymentRunspace {
             Function Write-Raw {
                 Param([string]$Text)
                 $RawLog.WriteLine("$(Get-Date -Format 'HH:mm:ss.fff')  $Text")
-            };
-
-            Set-StrictMode -Version Latest;
-            $ErrorActionPreference = 'Stop';
-
-            $Module = Get-Module -ListAvailable -Name 'OSD' |
-            Sort-Object Version -Descending |
-            Select-Object -First 1;
-
-            If (-not $Module) {
-                throw 'Could not find the OSD module.';
-            };
-
-            $ModulePath = $Module.Path;
-            $ModuleRoot = Split-Path -Path $ModulePath -Parent;
-
-            $CandidateFiles = @(
-                Get-Item -Path $ModulePath -Force
-            ) + (
-                Get-ChildItem -Path $ModuleRoot -Recurse -File -Include '*.ps1', '*.psm1' -ErrorAction SilentlyContinue
-            );
-
-            $TargetPath = $CandidateFiles |
-            Select-String -Pattern 'Function\s+Save-WebFile\b' |
-            Select-Object -First 1 |
-            ForEach-Object { $_.Path; };
-
-            If (-not $TargetPath) {
-                throw "Could not locate Function Save-WebFile under $ModuleRoot";
-            };
-
-            $Content = Get-Content -Path $TargetPath -Raw;
-            $BackupPath = '{0}.bak-{1}' -f $TargetPath, (Get-Date -Format 'yyyyMMddHHmmss');
-
-            Copy-Item -Path $TargetPath -Destination $BackupPath -Force;
-
-            $UpdatedContent = [regex]::Replace(
-                $Content,
-                '(?s)(Function\s+Save-WebFile\b.*?\$UseWebClient\s*=\s*)\$False(\s*;)',
-                '${1}$True${2}',
-                1
-            );
-
-            If ($UpdatedContent -eq $Content) {
-                throw 'Patch did not change the file.';
-            };
-
-            Set-Content -Path $TargetPath -Value $UpdatedContent -Encoding UTF8;
-
-            Remove-Module -Name 'OSD' -Force -ErrorAction SilentlyContinue;
-            Import-Module -Name $ModulePath -Force;
-
-            Enqueue "Patched: $TargetPath";
-            Enqueue "Backup : $BackupPath";
+            }
 
             # Make $Global:MyOSDCloud available in this runspace so Start-OSDCloud can read it
             $Global:MyOSDCloud = $MyOSDCloud
@@ -641,7 +589,7 @@ Function Start-DeploymentRunspace {
                         Remove-Item -Path $StdOutPath -Force -ErrorAction SilentlyContinue
                         Remove-Item -Path $StdErrPath -Force -ErrorAction SilentlyContinue
                     }
-                };
+                }
 
                 $OSDModule = Get-Module OSD
                 & $OSDModule {
@@ -687,7 +635,7 @@ Function Start-DeploymentRunspace {
 
                         $SourceUrl = [Uri]::EscapeUriString($SourceUrl.Replace('%', '~')).Replace('~', '%')
 
-                        $UseWebClient = $True
+                        $UseWebClient = $False
                         If ($WebClient) {
                             $UseWebClient = $True
                         }
@@ -774,8 +722,8 @@ Function Start-DeploymentRunspace {
                             Write-Warning "Could not download $DestinationFullName"
                             $Null
                         }
-                    };
-                };
+                    }
+                }
                 Enqueue 'Save-WebFile patched (curl redirected child process mode).'
                 Enqueue ''
 
@@ -914,30 +862,182 @@ Function Start-DeploymentRunspace {
                     };
                 };
 
-                $VerbosePreference = 'Continue'
+                $VerbosePreference = 'Continue';
+                $WarningPreference = 'Continue';
+                $InformationPreference = 'Continue';
+                $ErrorActionPreference = 'Continue';
+                $ProgressPreference = 'SilentlyContinue';
 
-                $ErrorActionPreference = 'SilentlyContinue';
+                $TranscriptPath = Join-Path $env:TEMP ("OSDCloud-Transcript-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log');
+                $RunnerPath = Join-Path $env:TEMP ("Run-OSDCloud-" + [guid]::NewGuid().ToString() + '.ps1');
+                $ParamsPath = Join-Path $env:TEMP ("OSDCloud-Params-" + [guid]::NewGuid().ToString() + '.clixml');
+                $MyOSDCloudPath = Join-Path $env:TEMP ("OSDCloud-MyOSDCloud-" + [guid]::NewGuid().ToString() + '.clixml');
 
-                Start-OSDCloud @Params 3>&1 4>&1 6>&1 2>$Null | ForEach-Object {
-                    $raw = $Null;
+                $Params | Export-Clixml -Path $ParamsPath;
+                $Global:MyOSDCloud | Export-Clixml -Path $MyOSDCloudPath;
 
-                    If ($_ -is [System.Management.Automation.WarningRecord]) {
-                        $raw = "WARNING: $($_.Message)";
-                    }
-                    Elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
-                        $raw = "VERBOSE: $($_.Message)";
-                    }
-                    Elseif ($_ -is [System.Management.Automation.InformationRecord]) {
-                        $raw = [string]$_.MessageData;
-                    }
-                    Else {
-                        $raw = $_.ToString();
+                $OSDModulePath = (Get-Module OSD).Path;
+
+                $RunnerContent = @"
+`$ErrorActionPreference = 'Continue';
+`$VerbosePreference = 'Continue';
+`$WarningPreference = 'Continue';
+`$InformationPreference = 'Continue';
+`$ProgressPreference = 'SilentlyContinue';
+
+Import-Module '$OSDModulePath' -Force;
+`$Global:MyOSDCloud = Import-Clixml -Path '$MyOSDCloudPath';
+`$Params = Import-Clixml -Path '$ParamsPath';
+
+Start-Transcript -Path '$TranscriptPath' -Force | Out-Null;
+
+Try {
+    Start-OSDCloud @Params;
+}
+Catch {
+    Write-Host ('ERROR: ' + `$_.Exception.Message);
+    If (`$_.ScriptStackTrace) {
+        Write-Host `$_.ScriptStackTrace;
+    };
+}
+Finally {
+    Stop-Transcript | Out-Null;
+}
+"@;
+
+                Set-Content -Path $RunnerPath -Value $RunnerContent -Encoding UTF8;
+
+                Enqueue "Transcript : $TranscriptPath";
+                Enqueue '';
+
+                $Process = Start-Process `
+                    -FilePath 'powershell.exe' `
+                    -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerPath`"" `
+                    -PassThru;
+
+                $LastIndex = 0;
+                $NoisePatterns = @(
+                    '^\s*% '
+                    '^\s*% Total'
+                    '^\s*% Received'
+                    'Xferd'
+                    'Average Speed'
+                    '^\s*Time'
+                    '^\s*Current"?\s*$'
+                    '^\s*Dload\s+Upload\s+Total\s+Spent\s+Left\s+Speed\s*$'
+                    '^\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*'
+                    '^Windows PowerShell transcript start'
+                    '^Windows PowerShell transcript end'
+                    '^Start time:'
+                    '^End time:'
+                    '^Username:'
+                    '^RunAs User:'
+                    '^Configuration Name:'
+                    '^Machine:'
+                    '^Host Application:'
+                    '^Process ID:'
+                    '^PSVersion:'
+                    '^PSEdition:'
+                    '^PSCompatibleVersions:'
+                    '^BuildVersion:'
+                    '^CLRVersion:'
+                    '^WSManStackVersion:'
+                    '^PSRemotingProtocolVersion:'
+                    '^SerializationVersion:'
+                );
+
+                While (-not $Process.HasExited) {
+                    If (Test-Path $TranscriptPath) {
+                        $Lines = Get-Content -Path $TranscriptPath -ErrorAction SilentlyContinue;
+
+                        If ($Lines.Count -gt $LastIndex) {
+                            $NewLines = $Lines[$LastIndex..($Lines.Count - 1)];
+
+                            ForEach ($Line in $NewLines) {
+                                If ([string]::IsNullOrWhiteSpace($Line)) {
+                                    continue;
+                                };
+
+                                $Trimmed = $Line.Trim();
+                                $SkipLine = $False;
+
+                                ForEach ($Pattern in $NoisePatterns) {
+                                    If ($Trimmed -match $Pattern) {
+                                        $SkipLine = $True;
+                                        break;
+                                    };
+                                };
+
+                                If ($SkipLine) {
+                                    continue;
+                                };
+
+                                Write-Raw $Line;
+
+                                If ($Trimmed -match '^ERROR:') {
+                                    Enqueue $Line 'error';
+                                }
+                                ElseIf ($Trimmed -match '^WARNING:') {
+                                    Enqueue $Line 'warning';
+                                }
+                                Else {
+                                    Enqueue $Line;
+                                };
+                            };
+
+                            $LastIndex = $Lines.Count;
+                        };
                     };
 
-                    If (-not [string]::IsNullOrWhiteSpace($raw)) {
-                        Write-Raw $raw;
-                        Enqueue $raw;
+                    Start-Sleep -Milliseconds 500;
+                };
+
+                $Process.WaitForExit();
+
+                If (Test-Path $TranscriptPath) {
+                    $Lines = Get-Content -Path $TranscriptPath -ErrorAction SilentlyContinue;
+
+                    If ($Lines.Count -gt $LastIndex) {
+                        $NewLines = $Lines[$LastIndex..($Lines.Count - 1)];
+
+                        ForEach ($Line in $NewLines) {
+                            If ([string]::IsNullOrWhiteSpace($Line)) {
+                                continue;
+                            };
+
+                            $Trimmed = $Line.Trim();
+                            $SkipLine = $False;
+
+                            ForEach ($Pattern in $NoisePatterns) {
+                                If ($Trimmed -match $Pattern) {
+                                    $SkipLine = $True;
+                                    break;
+                                };
+                            };
+
+                            If ($SkipLine) {
+                                continue;
+                            };
+
+                            Write-Raw $Line;
+
+                            If ($Trimmed -match '^ERROR:') {
+                                Enqueue $Line 'error';
+                            }
+                            ElseIf ($Trimmed -match '^WARNING:') {
+                                Enqueue $Line 'warning';
+                            }
+                            Else {
+                                Enqueue $Line;
+                            };
+                        };
                     };
+                };
+
+                Try {
+                    Remove-Item -Path $RunnerPath, $ParamsPath, $MyOSDCloudPath -Force -ErrorAction SilentlyContinue;
+                }
+                Catch {
                 };
 
                 $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' });
