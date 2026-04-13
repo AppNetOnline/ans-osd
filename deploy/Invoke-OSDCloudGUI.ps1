@@ -528,10 +528,20 @@ Function Start-DeploymentRunspace {
 
     $Null = $ps.AddScript({
 
+            # Raw log file — every line written here before GUI parsing
+            $RawLogPath = "$env:TEMP\ANS-OSDCloud-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+            $RawLog = [System.IO.StreamWriter]::new($RawLogPath, $False, [System.Text.Encoding]::UTF8)
+            $RawLog.AutoFlush = $True
+
             Function Enqueue {
                 Param([string]$Text, [string]$Type = 'line')
                 $MessageQueue.Enqueue(@{ Type = $Type; Text = $Text })
             };
+
+            Function Write-Raw {
+                Param([string]$Text)
+                $RawLog.WriteLine("$(Get-Date -Format 'HH:mm:ss.fff')  $Text")
+            }
 
             # Make $Global:MyOSDCloud available in this runspace so Start-OSDCloud can read it
             $Global:MyOSDCloud = $MyOSDCloud
@@ -546,9 +556,11 @@ Function Start-DeploymentRunspace {
                     Import-Module OSD -ErrorAction Stop
                 };
                 Enqueue "OSD module v$((Get-Module OSD).Version) loaded."
+                Enqueue "Raw log : $RawLogPath"
                 Enqueue ''
-                Enqueue "Target  : Windows $($Config.OSVersion) $($Config.OSEdition)"
-                Enqueue "Language: $($Config.OSLanguage)   Arch: $($Config.OSArch)"
+                $targetLabel = If ($Config.OSName) { $Config.OSName } Else { "$($Config.OSEdition) (OSDCloud auto-select)" }
+                Enqueue "Target  : $targetLabel"
+                Enqueue "Language: $($Config.OSLanguage)"
                 Enqueue "ZTI     : $($Config.ZTI)"
                 Enqueue ''
                 Enqueue 'Starting OSDCloud in Zero Touch mode...'
@@ -644,28 +656,44 @@ Function Start-DeploymentRunspace {
 
                 $VerbosePreference = 'Continue'
                 Start-OSDCloud @Params *>&1 | ForEach-Object {
-                    $line = If ($_ -is [System.Management.Automation.ErrorRecord]) {
-                        "ERROR: $($_.Exception.Message)"
+                    # Determine raw text and whether this is a real error
+                    $isError = $False
+                    $raw = If ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        $msg = $_.Exception.Message
+                        # curl.exe writes its progress header/rows to stderr — PowerShell wraps
+                        # them as ErrorRecords. Detect by the curl column-header pattern and
+                        # treat them as plain output instead of errors.
+                        If ($msg -match '^\s*%\s+Total|^\s*\d+\s+\d+[kKmMgG]?\s') {
+                            $msg
+                        } Else {
+                            $isError = $True
+                            "ERROR: $msg"
+                        }
                     }
-                    ElseIf ($_ -is [System.Management.Automation.WarningRecord]) {
-                        "WARNING: $($_.Message)"
-                    }
-                    ElseIf ($_ -is [System.Management.Automation.VerboseRecord]) {
-                        "VERBOSE: $($_.Message)"
-                    }
-                    ElseIf ($_ -is [System.Management.Automation.InformationRecord]) {
-                        $_.MessageData.ToString()
-                    }
+                    ElseIf ($_ -is [System.Management.Automation.WarningRecord])     { "WARNING: $($_.Message)" }
+                    ElseIf ($_ -is [System.Management.Automation.VerboseRecord])     { "VERBOSE: $($_.Message)" }
+                    ElseIf ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData.ToString() }
                     Else { $_.ToString() }
-                    If ($line -and $line.Trim()) { Enqueue $line }
+
+                    # Always write to raw log first
+                    If ($raw) { Write-Raw $raw }
+
+                    # Then enqueue for the GUI
+                    If ($raw -and $raw.Trim()) {
+                        If ($isError) { Enqueue $raw 'error' } Else { Enqueue $raw }
+                    }
                 };
 
                 $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' })
 
             }
             catch {
+                Write-Raw "EXCEPTION: $($_.Exception.Message)`n$($_.ScriptStackTrace)"
                 $MessageQueue.Enqueue(@{ Type = 'error'; Text = $_.Exception.Message })
                 $MessageQueue.Enqueue(@{ Type = 'line'; Text = $_.ScriptStackTrace })
+            }
+            finally {
+                $RawLog.Close()
             }
         })
 
