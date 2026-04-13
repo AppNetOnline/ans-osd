@@ -531,6 +531,108 @@ Function Start-DeploymentRunspace {
                 Enqueue "Raw log : $RawLogPath"
                 Enqueue ''
 
+                # ── Patch Save-WebFile inside the OSD module scope ────────────
+                # The original uses bare `Invoke-Expression curl.exe` with no stderr
+                # redirect and no exit-code check. Under ErrorActionPreference=Stop
+                # (which OSD sets internally) any non-zero curl exit becomes a
+                # terminating error that aborts the entire deployment.
+                # Fixes applied here:
+                #   --no-progress-meter  → silences the "% Total" progress table
+                #   2>&1 | Out-Null      → stderr never hits the PS error stream
+                #   $local:EAP=Continue  → non-zero exit stays non-terminating
+                #   $LASTEXITCODE check  → logs failures as warnings, not crashes
+                $OSDModule = Get-Module OSD
+                & $OSDModule {
+                    Function Save-WebFile {
+                        [CmdletBinding()]
+                        [OutputType([System.IO.FileInfo])]
+                        param (
+                            [Parameter(Position = 0, Mandatory, ValueFromPipelineByPropertyName)]
+                            [Alias('FileUri')][System.String]$SourceUrl,
+                            [Parameter(ValueFromPipelineByPropertyName)]
+                            [Alias('FileName')][System.String]$DestinationName,
+                            [Alias('Path')][System.String]$DestinationDirectory = (Join-Path $env:TEMP 'OSD'),
+                            [System.Management.Automation.SwitchParameter]$Overwrite,
+                            [System.Management.Automation.SwitchParameter]$WebClient
+                        )
+
+                        Write-Verbose "SourceUrl: $SourceUrl"
+                        Write-Verbose "DestinationDirectory: $DestinationDirectory"
+
+                        if (-not (Test-Path $DestinationDirectory)) {
+                            New-Item -Path $DestinationDirectory -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                        }
+
+                        $testFile = New-Item -Path (Join-Path $DestinationDirectory "$(Get-Random).tmp") -ItemType File -ErrorAction SilentlyContinue
+                        if ($testFile) { Remove-Item $testFile.FullName -Force | Out-Null }
+                        else { Write-Warning 'Unable to write to Destination Directory'; return $null }
+
+                        if (-not $PSBoundParameters['DestinationName']) {
+                            $DestinationName = ([System.Uri]$SourceUrl).AbsolutePath.Split('/')[-1]
+                        }
+
+                        $DestinationFullName = Join-Path ((Get-Item $DestinationDirectory -Force).FullName) $DestinationName
+
+                        if ((-not $Overwrite) -and (Test-Path $DestinationFullName)) {
+                            Write-Verbose 'File already cached'
+                            return Get-Item $DestinationFullName -Force
+                        }
+
+                        $SourceUrl = [Uri]::EscapeUriString($SourceUrl.Replace('%', '~')).Replace('~', '%')
+
+                        $UseWebClient = $false
+                        if ($WebClient)                                                   { $UseWebClient = $true }
+                        elseif (([System.Net.WebRequest]::DefaultWebProxy).Address)      { $UseWebClient = $true }
+                        elseif (!(Test-CommandCurlExe))                                   { $UseWebClient = $true }
+
+                        if ($UseWebClient) {
+                            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls1
+                            $wc = New-Object System.Net.WebClient
+                            try   { $wc.DownloadFile($SourceUrl, $DestinationFullName) }
+                            catch { Write-Warning "WebClient download failed: $_" }
+                            finally { $wc.Dispose() }
+                        }
+                        else {
+                            try   { $remote = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $SourceUrl }
+                            catch { Write-Warning "HEAD request failed: $_"; return $null }
+
+                            $remoteLength        = [Int64]($remote.Headers.'Content-Length' | Select-Object -First 1)
+                            $remoteAcceptsRanges = ($remote.Headers.'Accept-Ranges' | Select-Object -First 1) -eq 'bytes'
+
+                            $local:ErrorActionPreference = 'Continue'
+                            Invoke-Expression "& curl.exe --insecure --location --no-progress-meter --output `"$DestinationFullName`" --url `"$SourceUrl`" 2>&1" | Out-Null
+                            if ($LASTEXITCODE -ne 0) {
+                                Write-Warning "curl.exe exited $LASTEXITCODE downloading $([System.IO.Path]::GetFileName($DestinationFullName))"
+                            }
+
+                            $RetryDelay = 1; $MaxRetry = 10; $RetryCount = 0
+                            while (
+                                (Test-Path $DestinationFullName) -and
+                                ((Get-Item $DestinationFullName).Length -lt $remoteLength) -and
+                                $remoteAcceptsRanges -and ($RetryCount -lt $MaxRetry)
+                            ) {
+                                Write-Verbose "Incomplete download; retrying in $RetryDelay s (attempt $($RetryCount+1))"
+                                Start-Sleep -Seconds $RetryDelay
+                                $RetryDelay *= 2; $RetryCount++
+                                $local:ErrorActionPreference = 'Continue'
+                                Invoke-Expression "& curl.exe --insecure --location --no-progress-meter --continue-at - --output `"$DestinationFullName`" --url `"$SourceUrl`" 2>&1" | Out-Null
+                                if ($LASTEXITCODE -ne 0) {
+                                    Write-Warning "curl.exe retry $RetryCount exited $LASTEXITCODE"
+                                }
+                            }
+
+                            if ((Test-Path $DestinationFullName) -and ((Get-Item $DestinationFullName).Length -lt $remoteLength)) {
+                                Write-Warning "Download still incomplete after $RetryCount retries: $([System.IO.Path]::GetFileName($DestinationFullName))"
+                            }
+                        }
+
+                        if (Test-Path $DestinationFullName) { Get-Item $DestinationFullName -Force }
+                        else { Write-Warning "Could not download $DestinationFullName"; $null }
+                    };
+                };
+                Enqueue 'Save-WebFile patched (curl silent mode).'
+                Enqueue ''
+
                 # ── Hardware detection (requires OSD module) ──────────────────
                 $HWProduct      = Get-MyComputerProduct
                 $HWModel        = Get-MyComputerModel
@@ -542,7 +644,7 @@ Function Start-DeploymentRunspace {
                 If ($DriverPack) {
                     $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
                     Enqueue "Driver pack : $($DriverPack.Name)"
-                }
+                };
 
                 # HP-specific BIOS / HPIA settings
                 If (Test-HPIASupport) {
@@ -556,7 +658,7 @@ Function Start-DeploymentRunspace {
                         Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1')
                         Manage-HPBiosSettings -SetSettings
                     } catch { Enqueue "WARNING: HP BIOS settings script failed: $($_.Exception.Message)" }
-                }
+                };
 
                 # Lenovo-specific BIOS settings
                 If ($HWManufacturer -match 'Lenovo') {
@@ -565,7 +667,7 @@ Function Start-DeploymentRunspace {
                         Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1')
                         Manage-LenovoBIOSSettings -SetSettings
                     } catch { Enqueue "WARNING: Lenovo BIOS settings script failed: $($_.Exception.Message)" }
-                }
+                };
 
                 Enqueue ''
                 $targetLabel = If ($Config.OSName) { $Config.OSName } Else { "$($Config.OSEdition) (OSDCloud auto-select)" }
@@ -664,40 +766,20 @@ Function Start-DeploymentRunspace {
                     };
                 };
 
-                # Prevent curl.exe stderr from becoming a terminating error.
-                # The OSD module sets ErrorActionPreference = Stop internally; resetting it
-                # here in the runspace scope stops that from propagating to native commands.
-                $ErrorActionPreference = 'Continue'
-                $VerbosePreference     = 'Continue'
+                $VerbosePreference = 'Continue'
 
                 Start-OSDCloud @Params *>&1 | ForEach-Object {
                     $isError = $False
                     $raw = If ($_ -is [System.Management.Automation.ErrorRecord]) {
-                        $msg = $_.Exception.Message
-                        # curl writes its progress table to stderr. When ErrorActionPreference
-                        # is Stop inside OSD, PS serialises it as "PS>TerminatingError(curl.exe)"
-                        # on the output stream. Treat all of these as plain (non-error) lines.
-                        If ($msg -match '^\s*%\s+Total|^\s*\d+\s+\d+[kKmMgG]?\s|PS>TerminatingError') {
-                            $msg
-                        } Else {
-                            $isError = $True
-                            "ERROR: $msg"
-                        }
+                        $isError = $True
+                        "ERROR: $($_.Exception.Message)"
                     }
                     ElseIf ($_ -is [System.Management.Automation.WarningRecord])     { "WARNING: $($_.Message)" }
                     ElseIf ($_ -is [System.Management.Automation.VerboseRecord])     { "VERBOSE: $($_.Message)" }
                     ElseIf ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData.ToString() }
-                    Else {
-                        $str = $_.ToString()
-                        # Catch the serialised TerminatingError string that lands in the
-                        # output stream via *>&1 when OSD calls curl under ErrorActionPreference=Stop
-                        If ($str -match 'PS>TerminatingError\(curl') { $null } Else { $str }
-                    }
+                    Else { $_.ToString() }
 
-                    # Always write to raw log first
                     If ($raw) { Write-Raw $raw }
-
-                    # Then enqueue for the GUI
                     If ($raw -and $raw.Trim()) {
                         If ($isError) { Enqueue $raw 'error' } Else { Enqueue $raw }
                     }
