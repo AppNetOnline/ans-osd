@@ -269,7 +269,7 @@ Add-Type -AssemblyName System.Windows.Forms
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Appalachian Network Services  —  appnetonline.com"
+                    <TextBlock Text="Appalachian Network Services - appnetonline.com"
                                FontFamily="Cascadia Code, Consolas"
                                FontSize="10" Foreground="#2A2A2A"
                                VerticalAlignment="Center"/>
@@ -353,7 +353,7 @@ $script:ProgressMap = [ordered]@{
     'installing drivers'        = @(65, 'Installing drivers...')
     'driver'                    = @(68, 'Processing drivers...')
     'setting up windows'        = @(72, 'Configuring Windows...')
-    'oobe'                      = @(76, 'Setting up OOBE...')
+    #'oobe'                      = @(76, 'Setting up OOBE...')
     'bitlocker'                 = @(82, 'Configuring BitLocker...')
     'winre'                     = @(85, 'Rebuilding WinRE...')
     'finishing'                 = @(90, 'Finishing deployment...')
@@ -841,7 +841,7 @@ Finally {
                         ($DownloadProgress.FileName -ne $LastDownloadFileName -or $DownloadProgress.Percent -ne $LastDownloadPercent)
                     ) {
                         $LastDownloadFileName = $DownloadProgress.FileName;
-                        $LastDownloadPercent  = $DownloadProgress.Percent;
+                        $LastDownloadPercent = $DownloadProgress.Percent;
 
                         Enqueue "Downloading $($DownloadProgress.FileName): $($DownloadProgress.Percent)%";
 
@@ -850,10 +850,10 @@ Finally {
                         # formatting fires at 30 % via the ProgressMap keyword match).
                         $MappedPct = 15 + [math]::Round($DownloadProgress.Percent * 0.14);
                         $MessageQueue.Enqueue(@{
-                            Type    = 'progress'
-                            Percent = [int]$MappedPct
-                            Label   = "Downloading ESD: $($DownloadProgress.Percent)%"
-                        });
+                                Type    = 'progress'
+                                Percent = [int]$MappedPct
+                                Label   = "Downloading ESD: $($DownloadProgress.Percent)%"
+                            });
                     };
 
                     If (Test-Path $TranscriptPath) {
