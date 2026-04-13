@@ -139,6 +139,10 @@ $selectors = @(
 	'Microsoft.XboxSpeechToTextOverlay';
 	'Microsoft.GamingApp';
 	'Microsoft.ZuneVideo';
+    'Microsoft.Windows.Ai.Copilot.Provider';
+    'Microsoft.Copilot_8wekyb3d8bbwe';
+	'Microsoft.MicrosoftOfficeHub';
+	'Microsoft.PowerAutomateDesktop';
 );
 $getCommand = {
   Get-AppxProvisionedPackage -Online;
