@@ -20,7 +20,7 @@ $ChocoPackages = @(
     'notepadplusplus'
 );
 
-$TimeZone = 'Central Standard Time';
+$TimeZone = 'Eastern Standard Time';
 
 #endregion
 
@@ -79,8 +79,11 @@ Function Get-DeploySecrets {
 Function Initialize-SecretStoreVault {
     [CmdletBinding()]
     Param(
-        [Parameter(Mandatory = $True)]
-        [psobject]$Secrets
+        [Parameter(
+            Mandatory = $True
+        )]
+        [psobject]
+        $Secrets
     )
 
     Write-Log -Message 'Configuring SecretStore vault...';
@@ -98,7 +101,9 @@ Function Initialize-SecretStoreVault {
         Import-Module -Name $ModuleName -Force -ErrorAction Stop;
     };
 
-    Set-SecretStoreConfiguration -Authentication None -PasswordTimeout -1 -Interaction None -Confirm:$False -ErrorAction Stop;
+    Reset-SecretStore -Authentication None -Interaction None -Force -Confirm:$False -ErrorAction Stop;
+
+    Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$False -ErrorAction Stop;
 
     If (-not (Get-SecretVault -Name $Script:VaultName -ErrorAction SilentlyContinue)) {
         Register-SecretVault -Name $Script:VaultName -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault -ErrorAction Stop;
