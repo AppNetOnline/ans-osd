@@ -778,24 +778,30 @@ Function Start-DeploymentRunspace {
                 Start-OSDCloud @Params 3>&1 4>&1 6>&1 2>$Null | ForEach-Object {
                     $raw = $Null;
 
-                    If ($_ -is [System.Management.Automation.WarningRecord]) {
+                    if ($_ -is [System.Management.Automation.WarningRecord]) {
                         $raw = "WARNING: $($_.Message)";
                     }
-                    Elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
+                    elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
                         $raw = "VERBOSE: $($_.Message)";
                     }
-                    Elseif ($_ -is [System.Management.Automation.InformationRecord]) {
+                    elseif ($_ -is [System.Management.Automation.InformationRecord]) {
                         $raw = [string]$_.MessageData;
                     }
-                    Else {
+                    elseif ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        # This catches curl's stderr. Use 'Continue' to ignore it, 
+                        # or process it differently if you need the actual error text.
+                        return; 
+                    }
+                    else {
                         $raw = $_.ToString();
                     };
 
-                    If (-not [string]::IsNullOrWhiteSpace($raw)) {
+                    if (-not [string]::IsNullOrWhiteSpace($raw)) {
                         Write-Raw $raw;
                         Enqueue $raw;
                     };
                 };
+
 
                 $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' });
 
