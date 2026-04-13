@@ -361,8 +361,7 @@ $script:ProgressMap = [ordered]@{
     'bitlocker'             = @(82, 'Configuring BitLocker...')
     'winre'                 = @(85, 'Rebuilding WinRE...')
     'finishing'             = @(90, 'Finishing deployment...')
-    'complete'              = @(100, 'Task complete')
-    'restart'               = @(100, 'Deployment complete!')
+    'OSDCloud Finished'     = @(100, 'Deployment complete!')
 };
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -470,6 +469,7 @@ $DispatchTimer.Add_Tick({
                     Update-Progress 100 'Deployment complete!'
                     Set-Status 'Complete' '#3A9B50' '#3A9B50'
                     $script:IsDeploying = $False
+                    Restart-Computer -Force
                 }
             }
         };
