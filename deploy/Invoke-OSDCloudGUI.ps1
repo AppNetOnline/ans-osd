@@ -875,6 +875,10 @@ Finally {
 
                                 Write-Raw $Line;
 
+                                If ($Trimmed -match '^VERBOSE:') {
+                                    continue;
+                                };
+
                                 If ($Trimmed -match '^ERROR:') {
                                     Enqueue $Line 'error';
                                 }
