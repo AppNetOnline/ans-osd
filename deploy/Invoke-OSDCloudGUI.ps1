@@ -39,9 +39,9 @@ $DeployConfig = @{
     # ── $Global:MyOSDCloud behaviour keys (not passed to Start-OSDCloud) ──────
     RecoveryPartition     = [bool]$True
     OEMActivation         = [bool]$True
-    WindowsUpdate         = [bool]$False
+    WindowsUpdate         = [bool]$True
     WindowsUpdateDrivers  = [bool]$False
-    WindowsDefenderUpdate = [bool]$False
+    WindowsDefenderUpdate = [bool]$True
     SetTimeZone           = [bool]$False
     ClearDiskConfirm      = [bool]$False
     ShutdownSetupComplete = [bool]$False
