@@ -541,6 +541,8 @@ Function Start-DeploymentRunspace {
                 #   2>&1 | Out-Null      → stderr never hits the PS error stream
                 #   $local:EAP=Continue  → non-zero exit stays non-terminating
                 #   $LASTEXITCODE check  → logs failures as warnings, not crashes
+                
+                <#
                 $OSDModule = Get-Module OSD
                 & $OSDModule {
                     Function Save-WebFile {
@@ -581,22 +583,22 @@ Function Start-DeploymentRunspace {
                         $SourceUrl = [Uri]::EscapeUriString($SourceUrl.Replace('%', '~')).Replace('~', '%')
 
                         $UseWebClient = $false
-                        if ($WebClient)                                                   { $UseWebClient = $true }
-                        elseif (([System.Net.WebRequest]::DefaultWebProxy).Address)      { $UseWebClient = $true }
-                        elseif (!(Test-CommandCurlExe))                                   { $UseWebClient = $true }
+                        if ($WebClient) { $UseWebClient = $true }
+                        elseif (([System.Net.WebRequest]::DefaultWebProxy).Address) { $UseWebClient = $true }
+                        elseif (!(Test-CommandCurlExe)) { $UseWebClient = $true }
 
                         if ($UseWebClient) {
                             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls1
                             $wc = New-Object System.Net.WebClient
-                            try   { $wc.DownloadFile($SourceUrl, $DestinationFullName) }
+                            try { $wc.DownloadFile($SourceUrl, $DestinationFullName) }
                             catch { Write-Warning "WebClient download failed: $_" }
                             finally { $wc.Dispose() }
                         }
                         else {
-                            try   { $remote = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $SourceUrl }
+                            try { $remote = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $SourceUrl }
                             catch { Write-Warning "HEAD request failed: $_"; return $null }
 
-                            $remoteLength        = [Int64]($remote.Headers.'Content-Length' | Select-Object -First 1)
+                            $remoteLength = [Int64]($remote.Headers.'Content-Length' | Select-Object -First 1)
                             $remoteAcceptsRanges = ($remote.Headers.'Accept-Ranges' | Select-Object -First 1) -eq 'bytes'
 
                             $local:ErrorActionPreference = 'Continue'
@@ -632,10 +634,11 @@ Function Start-DeploymentRunspace {
                 };
                 Enqueue 'Save-WebFile patched (curl silent mode).'
                 Enqueue ''
+                #>
 
                 # ── Hardware detection (requires OSD module) ──────────────────
-                $HWProduct      = Get-MyComputerProduct
-                $HWModel        = Get-MyComputerModel
+                $HWProduct = Get-MyComputerProduct
+                $HWModel = Get-MyComputerModel
                 $HWManufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
 
                 # Auto driver pack — derive OS version label from OSName or fall back to Windows 11
@@ -649,7 +652,7 @@ Function Start-DeploymentRunspace {
                 # HP-specific BIOS / HPIA settings
                 If (Test-HPIASupport) {
                     Enqueue 'HP device detected — enabling HPIA / BIOS / TPM updates'
-                    $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
+                    $Global:MyOSDCloud.HPTPMUpdate = [bool]$True
                     $Global:MyOSDCloud.HPBIOSUpdate = [bool]$True
                     If ($HWProduct -ne '83B2' -and $HWModel -notmatch 'zbook') {
                         $Global:MyOSDCloud.HPIAALL = [bool]$True
@@ -657,7 +660,8 @@ Function Start-DeploymentRunspace {
                     try {
                         Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1')
                         Manage-HPBiosSettings -SetSettings
-                    } catch { Enqueue "WARNING: HP BIOS settings script failed: $($_.Exception.Message)" }
+                    }
+                    catch { Enqueue "WARNING: HP BIOS settings script failed: $($_.Exception.Message)" }
                 };
 
                 # Lenovo-specific BIOS settings
@@ -666,7 +670,8 @@ Function Start-DeploymentRunspace {
                     try {
                         Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1')
                         Manage-LenovoBIOSSettings -SetSettings
-                    } catch { Enqueue "WARNING: Lenovo BIOS settings script failed: $($_.Exception.Message)" }
+                    }
+                    catch { Enqueue "WARNING: Lenovo BIOS settings script failed: $($_.Exception.Message)" }
                 };
 
                 Enqueue ''
@@ -768,24 +773,71 @@ Function Start-DeploymentRunspace {
 
                 $VerbosePreference = 'Continue'
 
-                Start-OSDCloud @Params *>&1 | ForEach-Object {
-                    $isError = $False
-                    $raw = If ($_ -is [System.Management.Automation.ErrorRecord]) {
-                        $isError = $True
-                        "ERROR: $($_.Exception.Message)"
-                    }
-                    ElseIf ($_ -is [System.Management.Automation.WarningRecord])     { "WARNING: $($_.Message)" }
-                    ElseIf ($_ -is [System.Management.Automation.VerboseRecord])     { "VERBOSE: $($_.Message)" }
-                    ElseIf ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData.ToString() }
-                    Else { $_.ToString() }
+                $OldErrorActionPreference = $ErrorActionPreference;
 
-                    If ($raw) { Write-Raw $raw }
-                    If ($raw -and $raw.Trim()) {
-                        If ($isError) { Enqueue $raw 'error' } Else { Enqueue $raw }
-                    }
+                Try {
+                    $ErrorActionPreference = 'Continue';
+
+                    Start-OSDCloud @Params *>&1 | ForEach-Object {
+                        $isError = $False;
+                        $raw = $Null;
+
+                        If ($_ -is [System.Management.Automation.ErrorRecord]) {
+                            $fullyQualifiedErrorId = $_.FullyQualifiedErrorId;
+                            $text = $_.ToString();
+
+                            $isCurlNoise = (
+                                $fullyQualifiedErrorId -eq 'NativeCommandError' -and (
+                                    $text -match '^\s*%(\s+Total|\s+Received|\s+Xferd|\s+Average Speed)?' -or
+                                    $text -match '^\s*% Total' -or
+                                    $text -match '^\s*% Received' -or
+                                    $text -match '^\s*Time(\s+|$)' -or
+                                    $text -match '^\s*Current"?\s*$' -or
+                                    $text -match '^\s*Dload\s+Upload\s+Total\s+Spent\s+Left\s+Speed\s*$' -or
+                                    $text -match '^\s*Average Speed\s+' -or
+                                    $text -match '^\s*84\.' -or
+                                    $text -match '\.esd\s*$'
+                                )
+                            );
+
+                            If ($isCurlNoise) {
+                                $raw = $text;
+                            }
+                            Else {
+                                $isError = $True;
+                                $raw = "ERROR: $($_.Exception.Message)";
+                            };
+                        }
+                        Elseif ($_ -is [System.Management.Automation.WarningRecord]) {
+                            $raw = "WARNING: $($_.Message)";
+                        }
+                        Elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
+                            $raw = "VERBOSE: $($_.Message)";
+                        }
+                        Elseif ($_ -is [System.Management.Automation.InformationRecord]) {
+                            $raw = [string]$_.MessageData;
+                        }
+                        Else {
+                            $raw = $_.ToString();
+                        };
+
+                        If (-not [string]::IsNullOrWhiteSpace($raw)) {
+                            Write-Raw $raw;
+
+                            If ($isError) {
+                                Enqueue $raw 'error';
+                            }
+                            Else {
+                                Enqueue $raw;
+                            };
+                        };
+                    };
+
+                    $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' });
+                }
+                Finally {
+                    $ErrorActionPreference = $OldErrorActionPreference;
                 };
-
-                $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' })
 
             }
             catch {
