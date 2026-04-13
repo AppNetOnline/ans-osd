@@ -531,202 +531,6 @@ Function Start-DeploymentRunspace {
                 Enqueue "Raw log : $RawLogPath"
                 Enqueue ''
 
-                # ── Patch Save-WebFile inside the OSD module scope ────────────
-                # Call curl.exe as a child process with redirected stdout/stderr so
-                # its native stderr never enters PowerShell's error stream.
-                Function Invoke-CurlDownload {
-                    [CmdletBinding()]
-                    param (
-                        [Parameter(Mandatory = $True)]
-                        [System.String]$SourceUrl,
-
-                        [Parameter(Mandatory = $True)]
-                        [System.String]$DestinationFullName,
-
-                        [System.String]$ContinueAt
-                    )
-
-                    $StdOutPath = Join-Path $env:TEMP ("curl-" + [guid]::NewGuid().ToString() + ".out.log")
-                    $StdErrPath = Join-Path $env:TEMP ("curl-" + [guid]::NewGuid().ToString() + ".err.log")
-
-                    Try {
-                        $ArgumentList = @(
-                            '--insecure'
-                            '--location'
-                            '--silent'
-                            '--show-error'
-                        )
-
-                        If ($ContinueAt) {
-                            $ArgumentList += @('--continue-at', $ContinueAt)
-                        }
-
-                        $ArgumentList += @(
-                            '--output', $DestinationFullName
-                            '--url', $SourceUrl
-                        )
-
-                        $Process = Start-Process `
-                            -FilePath 'curl.exe' `
-                            -ArgumentList $ArgumentList `
-                            -RedirectStandardOutput $StdOutPath `
-                            -RedirectStandardError $StdErrPath `
-                            -NoNewWindow `
-                            -PassThru `
-                            -Wait
-
-                        $StdErr = @()
-                        If (Test-Path $StdErrPath) {
-                            $StdErr = Get-Content -Path $StdErrPath -ErrorAction SilentlyContinue
-                        }
-
-                        [PSCustomObject]@{
-                            ExitCode = $Process.ExitCode
-                            StdErr   = $StdErr
-                        }
-                    }
-                    Finally {
-                        Remove-Item -Path $StdOutPath -Force -ErrorAction SilentlyContinue
-                        Remove-Item -Path $StdErrPath -Force -ErrorAction SilentlyContinue
-                    }
-                }
-
-                $OSDModule = Get-Module OSD
-                & $OSDModule {
-                    Function Save-WebFile {
-                        [CmdletBinding()]
-                        [OutputType([System.IO.FileInfo])]
-                        param (
-                            [Parameter(Position = 0, Mandatory, ValueFromPipelineByPropertyName)]
-                            [Alias('FileUri')][System.String]$SourceUrl,
-                            [Parameter(ValueFromPipelineByPropertyName)]
-                            [Alias('FileName')][System.String]$DestinationName,
-                            [Alias('Path')][System.String]$DestinationDirectory = (Join-Path $env:TEMP 'OSD'),
-                            [System.Management.Automation.SwitchParameter]$Overwrite,
-                            [System.Management.Automation.SwitchParameter]$WebClient
-                        )
-
-                        Write-Verbose "SourceUrl: $SourceUrl"
-                        Write-Verbose "DestinationDirectory: $DestinationDirectory"
-
-                        If (-not (Test-Path $DestinationDirectory)) {
-                            New-Item -Path $DestinationDirectory -ItemType Directory -Force -ErrorAction Stop | Out-Null
-                        }
-
-                        $TestFile = New-Item -Path (Join-Path $DestinationDirectory "$(Get-Random).tmp") -ItemType File -ErrorAction SilentlyContinue
-                        If ($TestFile) {
-                            Remove-Item $TestFile.FullName -Force | Out-Null
-                        }
-                        Else {
-                            Write-Warning 'Unable to write to Destination Directory'
-                            return $Null
-                        }
-
-                        If (-not $PSBoundParameters.ContainsKey('DestinationName')) {
-                            $DestinationName = ([System.Uri]$SourceUrl).AbsolutePath.Split('/')[-1]
-                        }
-
-                        $DestinationFullName = Join-Path ((Get-Item $DestinationDirectory -Force).FullName) $DestinationName
-
-                        If ((-not $Overwrite) -and (Test-Path $DestinationFullName)) {
-                            Write-Verbose 'File already cached'
-                            return (Get-Item $DestinationFullName -Force)
-                        }
-
-                        $SourceUrl = [Uri]::EscapeUriString($SourceUrl.Replace('%', '~')).Replace('~', '%')
-
-                        $UseWebClient = $False
-                        If ($WebClient) {
-                            $UseWebClient = $True
-                        }
-                        ElseIf (([System.Net.WebRequest]::DefaultWebProxy).Address) {
-                            $UseWebClient = $True
-                        }
-                        ElseIf (-not (Test-CommandCurlExe)) {
-                            $UseWebClient = $True
-                        }
-
-                        If ($UseWebClient) {
-                            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls1
-                            $wc = New-Object System.Net.WebClient
-                            Try {
-                                $wc.DownloadFile($SourceUrl, $DestinationFullName)
-                            }
-                            Catch {
-                                Write-Warning "WebClient download failed: $($_.Exception.Message)"
-                                return $Null
-                            }
-                            Finally {
-                                $wc.Dispose()
-                            }
-                        }
-                        Else {
-                            Try {
-                                $remote = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $SourceUrl
-                            }
-                            Catch {
-                                Write-Warning "HEAD request failed: $($_.Exception.Message)"
-                                return $Null
-                            }
-
-                            $remoteLength = [Int64]($remote.Headers.'Content-Length' | Select-Object -First 1)
-                            $remoteAcceptsRanges = ($remote.Headers.'Accept-Ranges' | Select-Object -First 1) -eq 'bytes'
-
-                            $Result = Invoke-CurlDownload -SourceUrl $SourceUrl -DestinationFullName $DestinationFullName
-                            If ($Result.ExitCode -ne 0) {
-                                $ErrText = ($Result.StdErr -join ' ').Trim()
-                                If ($ErrText) {
-                                    Write-Warning "curl.exe exited $($Result.ExitCode): $ErrText"
-                                }
-                                Else {
-                                    Write-Warning "curl.exe exited $($Result.ExitCode) downloading $([System.IO.Path]::GetFileName($DestinationFullName))"
-                                }
-                            }
-
-                            $RetryDelay = 1
-                            $MaxRetry = 10
-                            $RetryCount = 0
-
-                            While (
-                                (Test-Path $DestinationFullName) -and
-                                ((Get-Item $DestinationFullName).Length -lt $remoteLength) -and
-                                $remoteAcceptsRanges -and
-                                ($RetryCount -lt $MaxRetry)
-                            ) {
-                                Write-Verbose "Incomplete download; retrying in $RetryDelay s (attempt $($RetryCount + 1))"
-                                Start-Sleep -Seconds $RetryDelay
-                                $RetryDelay *= 2
-                                $RetryCount++
-
-                                $Result = Invoke-CurlDownload -SourceUrl $SourceUrl -DestinationFullName $DestinationFullName -ContinueAt '-'
-                                If ($Result.ExitCode -ne 0) {
-                                    $ErrText = ($Result.StdErr -join ' ').Trim()
-                                    If ($ErrText) {
-                                        Write-Warning "curl.exe retry $RetryCount exited $($Result.ExitCode): $ErrText"
-                                    }
-                                    Else {
-                                        Write-Warning "curl.exe retry $RetryCount exited $($Result.ExitCode)"
-                                    }
-                                }
-                            }
-
-                            If ((Test-Path $DestinationFullName) -and ((Get-Item $DestinationFullName).Length -lt $remoteLength)) {
-                                Write-Warning "Download still incomplete after $RetryCount retries: $([System.IO.Path]::GetFileName($DestinationFullName))"
-                            }
-                        }
-
-                        If (Test-Path $DestinationFullName) {
-                            Get-Item $DestinationFullName -Force
-                        }
-                        Else {
-                            Write-Warning "Could not download $DestinationFullName"
-                            $Null
-                        }
-                    }
-                }
-                Enqueue 'Save-WebFile patched (curl redirected child process mode).'
-                Enqueue ''
-
                 # ── Hardware detection (requires OSD module) ──────────────────
                 $HWProduct = Get-MyComputerProduct
                 $HWModel = Get-MyComputerModel
@@ -868,6 +672,91 @@ Function Start-DeploymentRunspace {
                 $ErrorActionPreference = 'Continue';
                 $ProgressPreference = 'SilentlyContinue';
 
+                Function Get-OSDCloudEsdDownloadProgress {
+                    [CmdletBinding()]
+                    param (
+                        [Parameter(Mandatory = $False)]
+                        [System.Int64]$TotalBytes = 0
+                    )
+
+                    $EsdFile = Get-ChildItem `
+                        -Path 'C:\OSDCloud\OS' `
+                        -Filter '*.esd' `
+                        -File `
+                        -ErrorAction SilentlyContinue |
+                    Sort-Object LastWriteTime -Descending |
+                    Select-Object -First 1;
+
+                    If (-not $EsdFile) {
+                        return $Null;
+                    };
+
+                    If ($TotalBytes -le 0) {
+                        return [PSCustomObject]@{
+                            Path         = $EsdFile.FullName
+                            FileName     = $EsdFile.Name
+                            CurrentBytes = [Int64]$EsdFile.Length
+                            TotalBytes   = [Int64]0
+                            Percent      = [Int32]0
+                        };
+                    };
+
+                    $Percent = [math]::Floor(($EsdFile.Length / $TotalBytes) * 100);
+
+                    If ($Percent -gt 100) {
+                        $Percent = 100;
+                    }
+                    ElseIf ($Percent -lt 0) {
+                        $Percent = 0;
+                    };
+
+                    return [PSCustomObject]@{
+                        Path         = $EsdFile.FullName
+                        FileName     = $EsdFile.Name
+                        CurrentBytes = [Int64]$EsdFile.Length
+                        TotalBytes   = [Int64]$TotalBytes
+                        Percent      = [Int32]$Percent
+                    };
+                };
+
+                $EsdTotalBytes = [Int64]0;
+
+                If ($Global:MyOSDCloud) {
+                    If ($Global:MyOSDCloud.PSObject.Properties.Match('ImageFile').Count -gt 0 -and $Global:MyOSDCloud.ImageFile) {
+                        $ImageFile = $Global:MyOSDCloud.ImageFile;
+
+                        Foreach ($PropertyName in @('TargetSize', 'Size', 'FileSize', 'Length', 'ContentLength')) {
+                            If ($ImageFile.PSObject.Properties.Match($PropertyName).Count -gt 0 -and $ImageFile.$PropertyName) {
+                                Try {
+                                    $EsdTotalBytes = [Int64]$ImageFile.$PropertyName;
+                                    break;
+                                }
+                                Catch {
+                                };
+                            };
+                        };
+
+                        If (($EsdTotalBytes -le 0) -and $ImageFile.PSObject.Properties.Match('Url').Count -gt 0 -and $ImageFile.Url) {
+                            Try {
+                                $HeadResponse = Invoke-WebRequest `
+                                    -Uri $ImageFile.Url `
+                                    -Method Head `
+                                    -UseBasicParsing `
+                                    -ErrorAction Stop;
+
+                                If ($HeadResponse.Headers.'Content-Length') {
+                                    $EsdTotalBytes = [Int64]($HeadResponse.Headers.'Content-Length' | Select-Object -First 1);
+                                };
+                            }
+                            Catch {
+                            };
+                        };
+                    };
+                };
+
+                $LastDownloadPercent = -1;
+                $LastDownloadFileName = $Null;
+
                 $TranscriptPath = Join-Path $env:TEMP ("OSDCloud-Transcript-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log');
                 $RunnerPath = Join-Path $env:TEMP ("Run-OSDCloud-" + [guid]::NewGuid().ToString() + '.ps1');
                 $ParamsPath = Join-Path $env:TEMP ("OSDCloud-Params-" + [guid]::NewGuid().ToString() + '.clixml');
@@ -912,8 +801,8 @@ Finally {
 
                 $Process = Start-Process `
                     -FilePath 'powershell.exe' `
-                    -WindowStyle Hidden `
                     -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerPath`"" `
+                    -WindowStyle Hidden `
                     -PassThru;
 
                 $LastIndex = 0;
@@ -948,6 +837,17 @@ Finally {
                 );
 
                 While (-not $Process.HasExited) {
+                    $DownloadProgress = Get-OSDCloudEsdDownloadProgress -TotalBytes $EsdTotalBytes;
+
+                    If (
+                        $DownloadProgress -and
+                        ($DownloadProgress.FileName -ne $LastDownloadFileName -or $DownloadProgress.Percent -ne $LastDownloadPercent)
+                    ) {
+                        $LastDownloadFileName = $DownloadProgress.FileName;
+                        $LastDownloadPercent = $DownloadProgress.Percent;
+                        Enqueue "Downloading $($DownloadProgress.FileName): $($DownloadProgress.Percent)%";
+                    };
+
                     If (Test-Path $TranscriptPath) {
                         $Lines = Get-Content -Path $TranscriptPath -ErrorAction SilentlyContinue;
 
