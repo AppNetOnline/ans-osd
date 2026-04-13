@@ -29,7 +29,7 @@ $DeployConfig = @{
     # ── Start-OSDCloud switch parameters ──────────────────────────────────────
     ZTI                   = $True      # Zero Touch — suppresses all OSDCloud prompts
     SkipAutopilot         = $True      # Skip Autopilot hash collection
-    Restart               = $False     # Restart after deployment
+    Restart               = $True     # Restart after deployment
     Shutdown              = $False     # Shutdown after deployment
     Firmware              = $False     # Apply firmware updates
     Screenshot            = $False     # Capture screenshots during deployment
@@ -469,7 +469,6 @@ $DispatchTimer.Add_Tick({
                     Update-Progress 100 'Deployment complete!'
                     Set-Status 'Complete' '#3A9B50' '#3A9B50'
                     $script:IsDeploying = $False
-                    Restart-Computer -Force
                 }
             }
         };
