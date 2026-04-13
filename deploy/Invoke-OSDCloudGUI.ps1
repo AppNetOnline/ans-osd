@@ -361,8 +361,8 @@ $script:ProgressMap = [ordered]@{
     'bitlocker'             = @(82, 'Configuring BitLocker...')
     'winre'                 = @(85, 'Rebuilding WinRE...')
     'finishing'             = @(90, 'Finishing deployment...')
-    'complete'              = @(100, 'Deployment complete!')
-    'restart'               = @(100, 'Complete — system restarting...')
+    'complete'              = @(100, 'Task complete')
+    'restart'               = @(100, 'Deployment complete!')
 };
 
 # ─────────────────────────────────────────────────────────────────────────────
