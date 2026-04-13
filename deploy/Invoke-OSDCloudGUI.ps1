@@ -912,6 +912,7 @@ Finally {
 
                 $Process = Start-Process `
                     -FilePath 'powershell.exe' `
+                    -WindowStyle Hidden `
                     -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerPath`"" `
                     -PassThru;
 
