@@ -532,17 +532,65 @@ Function Start-DeploymentRunspace {
                 Enqueue ''
 
                 # ── Patch Save-WebFile inside the OSD module scope ────────────
-                # The original uses bare `Invoke-Expression curl.exe` with no stderr
-                # redirect and no exit-code check. Under ErrorActionPreference=Stop
-                # (which OSD sets internally) any non-zero curl exit becomes a
-                # terminating error that aborts the entire deployment.
-                # Fixes applied here:
-                #   --no-progress-meter  → silences the "% Total" progress table
-                #   2>&1 | Out-Null      → stderr never hits the PS error stream
-                #   $local:EAP=Continue  → non-zero exit stays non-terminating
-                #   $LASTEXITCODE check  → logs failures as warnings, not crashes
-                
-                <#
+                # Call curl.exe as a child process with redirected stdout/stderr so
+                # its native stderr never enters PowerShell's error stream.
+                Function Invoke-CurlDownload {
+                    [CmdletBinding()]
+                    param (
+                        [Parameter(Mandatory = $True)]
+                        [System.String]$SourceUrl,
+
+                        [Parameter(Mandatory = $True)]
+                        [System.String]$DestinationFullName,
+
+                        [System.String]$ContinueAt
+                    )
+
+                    $StdOutPath = Join-Path $env:TEMP ("curl-" + [guid]::NewGuid().ToString() + ".out.log")
+                    $StdErrPath = Join-Path $env:TEMP ("curl-" + [guid]::NewGuid().ToString() + ".err.log")
+
+                    Try {
+                        $ArgumentList = @(
+                            '--insecure'
+                            '--location'
+                            '--silent'
+                            '--show-error'
+                        )
+
+                        If ($ContinueAt) {
+                            $ArgumentList += @('--continue-at', $ContinueAt)
+                        }
+
+                        $ArgumentList += @(
+                            '--output', $DestinationFullName
+                            '--url', $SourceUrl
+                        )
+
+                        $Process = Start-Process `
+                            -FilePath 'curl.exe' `
+                            -ArgumentList $ArgumentList `
+                            -RedirectStandardOutput $StdOutPath `
+                            -RedirectStandardError $StdErrPath `
+                            -NoNewWindow `
+                            -PassThru `
+                            -Wait
+
+                        $StdErr = @()
+                        If (Test-Path $StdErrPath) {
+                            $StdErr = Get-Content -Path $StdErrPath -ErrorAction SilentlyContinue
+                        }
+
+                        [PSCustomObject]@{
+                            ExitCode = $Process.ExitCode
+                            StdErr   = $StdErr
+                        }
+                    }
+                    Finally {
+                        Remove-Item -Path $StdOutPath -Force -ErrorAction SilentlyContinue
+                        Remove-Item -Path $StdErrPath -Force -ErrorAction SilentlyContinue
+                    }
+                };
+
                 $OSDModule = Get-Module OSD
                 & $OSDModule {
                     Function Save-WebFile {
@@ -561,80 +609,123 @@ Function Start-DeploymentRunspace {
                         Write-Verbose "SourceUrl: $SourceUrl"
                         Write-Verbose "DestinationDirectory: $DestinationDirectory"
 
-                        if (-not (Test-Path $DestinationDirectory)) {
+                        If (-not (Test-Path $DestinationDirectory)) {
                             New-Item -Path $DestinationDirectory -ItemType Directory -Force -ErrorAction Stop | Out-Null
                         }
 
-                        $testFile = New-Item -Path (Join-Path $DestinationDirectory "$(Get-Random).tmp") -ItemType File -ErrorAction SilentlyContinue
-                        if ($testFile) { Remove-Item $testFile.FullName -Force | Out-Null }
-                        else { Write-Warning 'Unable to write to Destination Directory'; return $null }
+                        $TestFile = New-Item -Path (Join-Path $DestinationDirectory "$(Get-Random).tmp") -ItemType File -ErrorAction SilentlyContinue
+                        If ($TestFile) {
+                            Remove-Item $TestFile.FullName -Force | Out-Null
+                        }
+                        Else {
+                            Write-Warning 'Unable to write to Destination Directory'
+                            return $Null
+                        }
 
-                        if (-not $PSBoundParameters['DestinationName']) {
+                        If (-not $PSBoundParameters.ContainsKey('DestinationName')) {
                             $DestinationName = ([System.Uri]$SourceUrl).AbsolutePath.Split('/')[-1]
                         }
 
                         $DestinationFullName = Join-Path ((Get-Item $DestinationDirectory -Force).FullName) $DestinationName
 
-                        if ((-not $Overwrite) -and (Test-Path $DestinationFullName)) {
+                        If ((-not $Overwrite) -and (Test-Path $DestinationFullName)) {
                             Write-Verbose 'File already cached'
-                            return Get-Item $DestinationFullName -Force
+                            return (Get-Item $DestinationFullName -Force)
                         }
 
                         $SourceUrl = [Uri]::EscapeUriString($SourceUrl.Replace('%', '~')).Replace('~', '%')
 
-                        $UseWebClient = $false
-                        if ($WebClient) { $UseWebClient = $true }
-                        elseif (([System.Net.WebRequest]::DefaultWebProxy).Address) { $UseWebClient = $true }
-                        elseif (!(Test-CommandCurlExe)) { $UseWebClient = $true }
+                        $UseWebClient = $False
+                        If ($WebClient) {
+                            $UseWebClient = $True
+                        }
+                        ElseIf (([System.Net.WebRequest]::DefaultWebProxy).Address) {
+                            $UseWebClient = $True
+                        }
+                        ElseIf (-not (Test-CommandCurlExe)) {
+                            $UseWebClient = $True
+                        }
 
-                        if ($UseWebClient) {
+                        If ($UseWebClient) {
                             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls1
                             $wc = New-Object System.Net.WebClient
-                            try { $wc.DownloadFile($SourceUrl, $DestinationFullName) }
-                            catch { Write-Warning "WebClient download failed: $_" }
-                            finally { $wc.Dispose() }
+                            Try {
+                                $wc.DownloadFile($SourceUrl, $DestinationFullName)
+                            }
+                            Catch {
+                                Write-Warning "WebClient download failed: $($_.Exception.Message)"
+                                return $Null
+                            }
+                            Finally {
+                                $wc.Dispose()
+                            }
                         }
-                        else {
-                            try { $remote = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $SourceUrl }
-                            catch { Write-Warning "HEAD request failed: $_"; return $null }
+                        Else {
+                            Try {
+                                $remote = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $SourceUrl
+                            }
+                            Catch {
+                                Write-Warning "HEAD request failed: $($_.Exception.Message)"
+                                return $Null
+                            }
 
                             $remoteLength = [Int64]($remote.Headers.'Content-Length' | Select-Object -First 1)
                             $remoteAcceptsRanges = ($remote.Headers.'Accept-Ranges' | Select-Object -First 1) -eq 'bytes'
 
-                            $local:ErrorActionPreference = 'Continue'
-                            Invoke-Expression "& curl.exe --insecure --location --no-progress-meter --output `"$DestinationFullName`" --url `"$SourceUrl`" 2>&1" | Out-Null
-                            if ($LASTEXITCODE -ne 0) {
-                                Write-Warning "curl.exe exited $LASTEXITCODE downloading $([System.IO.Path]::GetFileName($DestinationFullName))"
-                            }
-
-                            $RetryDelay = 1; $MaxRetry = 10; $RetryCount = 0
-                            while (
-                                (Test-Path $DestinationFullName) -and
-                                ((Get-Item $DestinationFullName).Length -lt $remoteLength) -and
-                                $remoteAcceptsRanges -and ($RetryCount -lt $MaxRetry)
-                            ) {
-                                Write-Verbose "Incomplete download; retrying in $RetryDelay s (attempt $($RetryCount+1))"
-                                Start-Sleep -Seconds $RetryDelay
-                                $RetryDelay *= 2; $RetryCount++
-                                $local:ErrorActionPreference = 'Continue'
-                                Invoke-Expression "& curl.exe --insecure --location --no-progress-meter --continue-at - --output `"$DestinationFullName`" --url `"$SourceUrl`" 2>&1" | Out-Null
-                                if ($LASTEXITCODE -ne 0) {
-                                    Write-Warning "curl.exe retry $RetryCount exited $LASTEXITCODE"
+                            $Result = Invoke-CurlDownload -SourceUrl $SourceUrl -DestinationFullName $DestinationFullName
+                            If ($Result.ExitCode -ne 0) {
+                                $ErrText = ($Result.StdErr -join ' ').Trim()
+                                If ($ErrText) {
+                                    Write-Warning "curl.exe exited $($Result.ExitCode): $ErrText"
+                                }
+                                Else {
+                                    Write-Warning "curl.exe exited $($Result.ExitCode) downloading $([System.IO.Path]::GetFileName($DestinationFullName))"
                                 }
                             }
 
-                            if ((Test-Path $DestinationFullName) -and ((Get-Item $DestinationFullName).Length -lt $remoteLength)) {
+                            $RetryDelay = 1
+                            $MaxRetry = 10
+                            $RetryCount = 0
+
+                            While (
+                                (Test-Path $DestinationFullName) -and
+                                ((Get-Item $DestinationFullName).Length -lt $remoteLength) -and
+                                $remoteAcceptsRanges -and
+                                ($RetryCount -lt $MaxRetry)
+                            ) {
+                                Write-Verbose "Incomplete download; retrying in $RetryDelay s (attempt $($RetryCount + 1))"
+                                Start-Sleep -Seconds $RetryDelay
+                                $RetryDelay *= 2
+                                $RetryCount++
+
+                                $Result = Invoke-CurlDownload -SourceUrl $SourceUrl -DestinationFullName $DestinationFullName -ContinueAt '-'
+                                If ($Result.ExitCode -ne 0) {
+                                    $ErrText = ($Result.StdErr -join ' ').Trim()
+                                    If ($ErrText) {
+                                        Write-Warning "curl.exe retry $RetryCount exited $($Result.ExitCode): $ErrText"
+                                    }
+                                    Else {
+                                        Write-Warning "curl.exe retry $RetryCount exited $($Result.ExitCode)"
+                                    }
+                                }
+                            }
+
+                            If ((Test-Path $DestinationFullName) -and ((Get-Item $DestinationFullName).Length -lt $remoteLength)) {
                                 Write-Warning "Download still incomplete after $RetryCount retries: $([System.IO.Path]::GetFileName($DestinationFullName))"
                             }
                         }
 
-                        if (Test-Path $DestinationFullName) { Get-Item $DestinationFullName -Force }
-                        else { Write-Warning "Could not download $DestinationFullName"; $null }
+                        If (Test-Path $DestinationFullName) {
+                            Get-Item $DestinationFullName -Force
+                        }
+                        Else {
+                            Write-Warning "Could not download $DestinationFullName"
+                            $Null
+                        }
                     };
                 };
-                Enqueue 'Save-WebFile patched (curl silent mode).'
+                Enqueue 'Save-WebFile patched (curl redirected child process mode).'
                 Enqueue ''
-                #>
 
                 # ── Hardware detection (requires OSD module) ──────────────────
                 $HWProduct = Get-MyComputerProduct
@@ -778,30 +869,24 @@ Function Start-DeploymentRunspace {
                 Start-OSDCloud @Params 3>&1 4>&1 6>&1 2>$Null | ForEach-Object {
                     $raw = $Null;
 
-                    if ($_ -is [System.Management.Automation.WarningRecord]) {
+                    If ($_ -is [System.Management.Automation.WarningRecord]) {
                         $raw = "WARNING: $($_.Message)";
                     }
-                    elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
+                    Elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
                         $raw = "VERBOSE: $($_.Message)";
                     }
-                    elseif ($_ -is [System.Management.Automation.InformationRecord]) {
+                    Elseif ($_ -is [System.Management.Automation.InformationRecord]) {
                         $raw = [string]$_.MessageData;
                     }
-                    elseif ($_ -is [System.Management.Automation.ErrorRecord]) {
-                        # This catches curl's stderr. Use 'Continue' to ignore it, 
-                        # or process it differently if you need the actual error text.
-                        return; 
-                    }
-                    else {
+                    Else {
                         $raw = $_.ToString();
                     };
 
-                    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                    If (-not [string]::IsNullOrWhiteSpace($raw)) {
                         Write-Raw $raw;
                         Enqueue $raw;
                     };
                 };
-
 
                 $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' });
 
