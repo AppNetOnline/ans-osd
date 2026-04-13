@@ -65,34 +65,6 @@ $Global:MyOSDCloud = [ordered]@{
 };
 
 
-$Product = (Get-MyComputerProduct)
-$Model = (Get-MyComputerModel)
-$Manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
-
-$DriverPack = Get-OSDCloudDriverPack -Product $DeployConfig.Product -OSVersion $DeployConfig.OSVersion -OSReleaseID $DeployConfig.OSReleaseID
-
-If ($DriverPack) {
-    $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
-};
-
-If (Test-HPIASupport) {
-    Write-SectionHeader -Message "Detected HP Device, Enabling HPIA, HP BIOS and HP TPM Updates"
-    $Global:MyOSDCloud.HPTPMUpdate = [bool]$True
-    $Global:MyOSDCloud.HPBIOSUpdate = [bool]$True
-    If ($Product -ne '83B2' -and $Model -notmatch "zbook") {
-        $Global:MyOSDCloud.HPIAALL = [bool]$True
-    };
-    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1")
-    Manage-HPBiosSettings -SetSettings
-};
-
-If ($Manufacturer -match "Lenovo") {
-    Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1")
-    try {
-        Manage-LenovoBIOSSettings -SetSettings
-    }
-    catch {}
-};
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
@@ -558,6 +530,44 @@ Function Start-DeploymentRunspace {
                 Enqueue "OSD module v$((Get-Module OSD).Version) loaded."
                 Enqueue "Raw log : $RawLogPath"
                 Enqueue ''
+
+                # ── Hardware detection (requires OSD module) ──────────────────
+                $HWProduct      = Get-MyComputerProduct
+                $HWModel        = Get-MyComputerModel
+                $HWManufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
+
+                # Auto driver pack — derive OS version label from OSName or fall back to Windows 11
+                $OSVerLabel = If ($Config.OSName -match 'Windows\s+\d+') { $Matches[0] } Else { 'Windows 11' }
+                $DriverPack = Get-OSDCloudDriverPack -Product $HWProduct -OSVersion $OSVerLabel -ErrorAction SilentlyContinue
+                If ($DriverPack) {
+                    $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
+                    Enqueue "Driver pack : $($DriverPack.Name)"
+                }
+
+                # HP-specific BIOS / HPIA settings
+                If (Test-HPIASupport) {
+                    Enqueue 'HP device detected — enabling HPIA / BIOS / TPM updates'
+                    $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
+                    $Global:MyOSDCloud.HPBIOSUpdate = [bool]$True
+                    If ($HWProduct -ne '83B2' -and $HWModel -notmatch 'zbook') {
+                        $Global:MyOSDCloud.HPIAALL = [bool]$True
+                    }
+                    try {
+                        Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-HPBiosSettings.ps1')
+                        Manage-HPBiosSettings -SetSettings
+                    } catch { Enqueue "WARNING: HP BIOS settings script failed: $($_.Exception.Message)" }
+                }
+
+                # Lenovo-specific BIOS settings
+                If ($HWManufacturer -match 'Lenovo') {
+                    Enqueue 'Lenovo device detected — applying BIOS settings'
+                    try {
+                        Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1')
+                        Manage-LenovoBIOSSettings -SetSettings
+                    } catch { Enqueue "WARNING: Lenovo BIOS settings script failed: $($_.Exception.Message)" }
+                }
+
+                Enqueue ''
                 $targetLabel = If ($Config.OSName) { $Config.OSName } Else { "$($Config.OSEdition) (OSDCloud auto-select)" }
                 Enqueue "Target  : $targetLabel"
                 Enqueue "Language: $($Config.OSLanguage)"
@@ -654,16 +664,20 @@ Function Start-DeploymentRunspace {
                     };
                 };
 
-                $VerbosePreference = 'Continue'
+                # Prevent curl.exe stderr from becoming a terminating error.
+                # The OSD module sets ErrorActionPreference = Stop internally; resetting it
+                # here in the runspace scope stops that from propagating to native commands.
+                $ErrorActionPreference = 'Continue'
+                $VerbosePreference     = 'Continue'
+
                 Start-OSDCloud @Params *>&1 | ForEach-Object {
-                    # Determine raw text and whether this is a real error
                     $isError = $False
                     $raw = If ($_ -is [System.Management.Automation.ErrorRecord]) {
                         $msg = $_.Exception.Message
-                        # curl.exe writes its progress header/rows to stderr — PowerShell wraps
-                        # them as ErrorRecords. Detect by the curl column-header pattern and
-                        # treat them as plain output instead of errors.
-                        If ($msg -match '^\s*%\s+Total|^\s*\d+\s+\d+[kKmMgG]?\s') {
+                        # curl writes its progress table to stderr. When ErrorActionPreference
+                        # is Stop inside OSD, PS serialises it as "PS>TerminatingError(curl.exe)"
+                        # on the output stream. Treat all of these as plain (non-error) lines.
+                        If ($msg -match '^\s*%\s+Total|^\s*\d+\s+\d+[kKmMgG]?\s|PS>TerminatingError') {
                             $msg
                         } Else {
                             $isError = $True
@@ -673,7 +687,12 @@ Function Start-DeploymentRunspace {
                     ElseIf ($_ -is [System.Management.Automation.WarningRecord])     { "WARNING: $($_.Message)" }
                     ElseIf ($_ -is [System.Management.Automation.VerboseRecord])     { "VERBOSE: $($_.Message)" }
                     ElseIf ($_ -is [System.Management.Automation.InformationRecord]) { $_.MessageData.ToString() }
-                    Else { $_.ToString() }
+                    Else {
+                        $str = $_.ToString()
+                        # Catch the serialised TerminatingError string that lands in the
+                        # output stream via *>&1 when OSD calls curl under ErrorActionPreference=Stop
+                        If ($str -match 'PS>TerminatingError\(curl') { $null } Else { $str }
+                    }
 
                     # Always write to raw log first
                     If ($raw) { Write-Raw $raw }
