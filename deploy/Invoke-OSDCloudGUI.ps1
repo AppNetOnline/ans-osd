@@ -64,8 +64,6 @@ $Global:MyOSDCloud = [ordered]@{
     CheckSHA1             = [bool]$DeployConfig.CheckSHA1
 };
 
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -504,6 +502,7 @@ Function Start-DeploymentRunspace {
             $RawLogPath = "$env:TEMP\ANS-OSDCloud-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
             $RawLog = [System.IO.StreamWriter]::new($RawLogPath, $False, [System.Text.Encoding]::UTF8)
             $RawLog.AutoFlush = $True
+            
 
             Function Enqueue {
                 Param([string]$Text, [string]$Type = 'line')
@@ -513,7 +512,60 @@ Function Start-DeploymentRunspace {
             Function Write-Raw {
                 Param([string]$Text)
                 $RawLog.WriteLine("$(Get-Date -Format 'HH:mm:ss.fff')  $Text")
-            }
+            };
+
+            Set-StrictMode -Version Latest;
+            $ErrorActionPreference = 'Stop';
+
+            $Module = Get-Module -ListAvailable -Name 'OSD' |
+            Sort-Object Version -Descending |
+            Select-Object -First 1;
+
+            If (-not $Module) {
+                throw 'Could not find the OSD module.';
+            };
+
+            $ModulePath = $Module.Path;
+            $ModuleRoot = Split-Path -Path $ModulePath -Parent;
+
+            $CandidateFiles = @(
+                Get-Item -Path $ModulePath -Force
+            ) + (
+                Get-ChildItem -Path $ModuleRoot -Recurse -File -Include '*.ps1', '*.psm1' -ErrorAction SilentlyContinue
+            );
+
+            $TargetPath = $CandidateFiles |
+            Select-String -Pattern 'Function\s+Save-WebFile\b' |
+            Select-Object -First 1 |
+            ForEach-Object { $_.Path; };
+
+            If (-not $TargetPath) {
+                throw "Could not locate Function Save-WebFile under $ModuleRoot";
+            };
+
+            $Content = Get-Content -Path $TargetPath -Raw;
+            $BackupPath = '{0}.bak-{1}' -f $TargetPath, (Get-Date -Format 'yyyyMMddHHmmss');
+
+            Copy-Item -Path $TargetPath -Destination $BackupPath -Force;
+
+            $UpdatedContent = [regex]::Replace(
+                $Content,
+                '(?s)(Function\s+Save-WebFile\b.*?\$UseWebClient\s*=\s*)\$False(\s*;)',
+                '${1}$True${2}',
+                1
+            );
+
+            If ($UpdatedContent -eq $Content) {
+                throw 'Patch did not change the file.';
+            };
+
+            Set-Content -Path $TargetPath -Value $UpdatedContent -Encoding UTF8;
+
+            Remove-Module -Name 'OSD' -Force -ErrorAction SilentlyContinue;
+            Import-Module -Name $ModulePath -Force;
+
+            Enqueue "Patched: $TargetPath";
+            Enqueue "Backup : $BackupPath";
 
             # Make $Global:MyOSDCloud available in this runspace so Start-OSDCloud can read it
             $Global:MyOSDCloud = $MyOSDCloud
@@ -635,7 +687,7 @@ Function Start-DeploymentRunspace {
 
                         $SourceUrl = [Uri]::EscapeUriString($SourceUrl.Replace('%', '~')).Replace('~', '%')
 
-                        $UseWebClient = $False
+                        $UseWebClient = $True
                         If ($WebClient) {
                             $UseWebClient = $True
                         }
