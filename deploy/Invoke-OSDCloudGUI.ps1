@@ -671,7 +671,7 @@ Function Start-DeploymentRunspace {
 
                 Function Get-OSDCloudEsdDownloadProgress {
                     [CmdletBinding()]
-                    param (
+                    Param (
                         [Parameter(Mandatory = $False)]
                         [System.Int64]$TotalBytes = 0
                     )
