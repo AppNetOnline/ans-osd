@@ -455,6 +455,9 @@ $DispatchTimer.Add_Tick({
                     $hint = Get-ProgressHint $msg.Text
                     If ($hint) { Update-Progress $hint[0] $hint[1] }
                 }
+                'progress' {
+                    Update-Progress $msg.Percent $msg.Label
+                }
                 'error' {
                     Write-LogLine "[$ts]  ERROR: $($msg.Text)" '#E50019' $True
                     Set-Status 'Error' '#E50019' '#E50019'
@@ -838,8 +841,19 @@ Finally {
                         ($DownloadProgress.FileName -ne $LastDownloadFileName -or $DownloadProgress.Percent -ne $LastDownloadPercent)
                     ) {
                         $LastDownloadFileName = $DownloadProgress.FileName;
-                        $LastDownloadPercent = $DownloadProgress.Percent;
+                        $LastDownloadPercent  = $DownloadProgress.Percent;
+
                         Enqueue "Downloading $($DownloadProgress.FileName): $($DownloadProgress.Percent)%";
+
+                        # Map ESD download percent (0–100) into the progress bar range
+                        # reserved for this stage: 15 % (download start) to 29 % (just before
+                        # formatting fires at 30 % via the ProgressMap keyword match).
+                        $MappedPct = 15 + [math]::Round($DownloadProgress.Percent * 0.14);
+                        $MessageQueue.Enqueue(@{
+                            Type    = 'progress'
+                            Percent = [int]$MappedPct
+                            Label   = "Downloading ESD: $($DownloadProgress.Percent)%"
+                        });
                     };
 
                     If (Test-Path $TranscriptPath) {
