@@ -29,12 +29,18 @@ $TimeZone = 'Eastern Standard Time';
 Function Write-Log {
     [CmdletBinding()]
     Param(
-        [Parameter(Mandatory = $True)]
-        [string]$Message,
+        [Parameter(
+            Mandatory = $True
+        )]
+        [string]
+        $Message,
 
-        [Parameter(Mandatory = $False)]
+        [Parameter(
+            Mandatory = $False
+        )]
         [ValidateSet('INFO', 'WARN', 'ERROR', 'SUCCESS')]
-        [string]$Level = 'INFO'
+        [string]
+        $Level = 'INFO'
     )
 
     $TimeStamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss';
