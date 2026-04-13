@@ -679,17 +679,16 @@ Function Start-DeploymentRunspace {
                     $EsdFile = Get-ChildItem `
                         -Path 'C:\OSDCloud\OS' `
                         -Filter '*.esd' `
-                        -File `
                         -ErrorAction SilentlyContinue |
                     Sort-Object LastWriteTime -Descending |
                     Select-Object -First 1;
 
                     If (-not $EsdFile) {
-                        return $Null;
+                        Return $Null;
                     };
 
                     If ($TotalBytes -le 0) {
-                        return [PSCustomObject]@{
+                        Return [PSCustomObject]@{
                             Path         = $EsdFile.FullName
                             FileName     = $EsdFile.Name
                             CurrentBytes = [Int64]$EsdFile.Length
@@ -707,7 +706,7 @@ Function Start-DeploymentRunspace {
                         $Percent = 0;
                     };
 
-                    return [PSCustomObject]@{
+                    Return [PSCustomObject]@{
                         Path         = $EsdFile.FullName
                         FileName     = $EsdFile.Name
                         CurrentBytes = [Int64]$EsdFile.Length
