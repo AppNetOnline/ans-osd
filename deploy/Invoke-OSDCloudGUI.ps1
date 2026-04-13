@@ -773,71 +773,31 @@ Function Start-DeploymentRunspace {
 
                 $VerbosePreference = 'Continue'
 
-                $OldErrorActionPreference = $ErrorActionPreference;
+                $ErrorActionPreference = 'SilentlyContinue';
 
-                Try {
-                    $ErrorActionPreference = 'Continue';
+                Start-OSDCloud @Params 3>&1 4>&1 6>&1 2>$Null | ForEach-Object {
+                    $raw = $Null;
 
-                    Start-OSDCloud @Params *>&1 | ForEach-Object {
-                        $isError = $False;
-                        $raw = $Null;
-
-                        If ($_ -is [System.Management.Automation.ErrorRecord]) {
-                            $fullyQualifiedErrorId = $_.FullyQualifiedErrorId;
-                            $text = $_.ToString();
-
-                            $isCurlNoise = (
-                                $fullyQualifiedErrorId -eq 'NativeCommandError' -and (
-                                    $text -match '^\s*%(\s+Total|\s+Received|\s+Xferd|\s+Average Speed)?' -or
-                                    $text -match '^\s*% Total' -or
-                                    $text -match '^\s*% Received' -or
-                                    $text -match '^\s*Time(\s+|$)' -or
-                                    $text -match '^\s*Current"?\s*$' -or
-                                    $text -match '^\s*Dload\s+Upload\s+Total\s+Spent\s+Left\s+Speed\s*$' -or
-                                    $text -match '^\s*Average Speed\s+' -or
-                                    $text -match '^\s*84\.' -or
-                                    $text -match '\.esd\s*$'
-                                )
-                            );
-
-                            If ($isCurlNoise) {
-                                $raw = $text;
-                            }
-                            Else {
-                                $isError = $True;
-                                $raw = "ERROR: $($_.Exception.Message)";
-                            };
-                        }
-                        Elseif ($_ -is [System.Management.Automation.WarningRecord]) {
-                            $raw = "WARNING: $($_.Message)";
-                        }
-                        Elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
-                            $raw = "VERBOSE: $($_.Message)";
-                        }
-                        Elseif ($_ -is [System.Management.Automation.InformationRecord]) {
-                            $raw = [string]$_.MessageData;
-                        }
-                        Else {
-                            $raw = $_.ToString();
-                        };
-
-                        If (-not [string]::IsNullOrWhiteSpace($raw)) {
-                            Write-Raw $raw;
-
-                            If ($isError) {
-                                Enqueue $raw 'error';
-                            }
-                            Else {
-                                Enqueue $raw;
-                            };
-                        };
+                    If ($_ -is [System.Management.Automation.WarningRecord]) {
+                        $raw = "WARNING: $($_.Message)";
+                    }
+                    Elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
+                        $raw = "VERBOSE: $($_.Message)";
+                    }
+                    Elseif ($_ -is [System.Management.Automation.InformationRecord]) {
+                        $raw = [string]$_.MessageData;
+                    }
+                    Else {
+                        $raw = $_.ToString();
                     };
 
-                    $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' });
-                }
-                Finally {
-                    $ErrorActionPreference = $OldErrorActionPreference;
+                    If (-not [string]::IsNullOrWhiteSpace($raw)) {
+                        Write-Raw $raw;
+                        Enqueue $raw;
+                    };
                 };
+
+                $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' });
 
             }
             catch {
