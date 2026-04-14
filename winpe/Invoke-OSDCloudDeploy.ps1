@@ -415,11 +415,15 @@ Finally {
 
     # ── Poll loop — BITS download progress + transcript tail ──────────────────
     While (-not $Process.HasExited) {
-        $BitsJob = try {
-            Get-BitsTransfer -AllUsers -ErrorAction Stop |
-                Where-Object { $_.JobState -in 'Transferring', 'Queued', 'Connecting' } |
-                Select-Object -First 1
-        } catch { $null }  # BITS COM class not registered in all WinPE environments
+        # BITS is not available in all WinPE environments — gate on service existence
+        $BitsJob = $null
+        If ((Get-Service -Name BITS -ErrorAction SilentlyContinue).Status -eq 'Running') {
+            try {
+                $BitsJob = Get-BitsTransfer -AllUsers -ErrorAction Stop |
+                    Where-Object { $_.JobState -in 'Transferring', 'Queued', 'Connecting' } |
+                    Select-Object -First 1
+            } catch { $BitsJob = $null }
+        }
 
         If ($BitsJob -and $BitsJob.BytesTotal -gt 0) {
             $dlPct = [math]::Floor($BitsJob.BytesTransferred / $BitsJob.BytesTotal * 100)
