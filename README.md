@@ -62,23 +62,29 @@ ans-osd/
 │   ├── manifest.json              ← App list for PostOS-Direct
 │   └── Unattend.xml               ← Windows answer file (OOBE suppression)
 │
-├── shared/                         ← Shared functions used by multiple scripts
-│   └── ans-osd-functions.ps1
-│
-├── admin/          [gitignored]    ← Run on your admin workstation to build USB media
+└── shared/                         ← Shared functions used by multiple scripts
+    └── ans-osd-functions.ps1
+```
+
+Build tooling and USB staging files are in the companion private repo:
+**[AppNetOnline/ans-osd-internal](https://github.com/AppNetOnline/ans-osd-internal)**
+
+```
+ans-osd-internal/
+├── admin/                          ← Run on your admin workstation to build USB media
 │   ├── Build-ANSWorkspace.ps1     ← Builds WinPE template, workspace, ISO, USB
 │   ├── Hyper-V.ps1                ← Test VM helper
 │   └── rebuild.ps1                ← Quick rebuild shortcut
 │
-└── usb/            [gitignored]    ← Copy to USB after New-OSDCloudUSB
+└── usb/                            ← Copy to USB after New-OSDCloudUSB
     └── SetupComplete/
         ├── SetupComplete.cmd      ← OSDCloud entry point (do not rename)
         ├── Bootstrap.ps1          ← Downloads PostOS from GitHub, runs it
-        └── secrets.json           ← FILL IN per customer — never commit this
+        └── secrets.json.example   ← Template — fill in and save as secrets.json
 ```
 
-> `admin/` and `usb/` are gitignored. They exist locally on your admin workstation only.
-> `secrets.json` must never be committed under any circumstances.
+> `secrets.json` is gitignored in both repos and must never be committed.
+> Real secret values live in your password manager only.
 
 ---
 
@@ -104,9 +110,9 @@ Edit the `# --- EDIT THESE ---` sections in each file before first use:
 |---|---|
 | `winpe/Invoke-OSDCloudGUI.ps1` | `$DeployConfig` — OS version, edition, options |
 | `winpe/Deploy-ANS.ps1` | OS name, edition, language if using terminal mode |
-| `admin/Build-ANSWorkspace.ps1` | `$DeployScriptURL`, `$WorkspacePath`, `$CloudDrivers` |
-| `usb/SetupComplete/Bootstrap.ps1` | `$GitHubBaseURL`, `$PostOSMethod` |
-| `usb/SetupComplete/secrets.json` | All fields — real passwords, S1 token, CWA key |
+| `admin/Build-ANSWorkspace.ps1` *(private repo)* | `$DeployScriptURL`, `$WorkspacePath`, `$CloudDrivers` |
+| `usb/SetupComplete/Bootstrap.ps1` *(private repo)* | `$GitHubBaseURL`, `$PostOSMethod` |
+| `usb/SetupComplete/secrets.json` *(USB only, never committed)* | All fields — real passwords, S1 token, CWA key |
 
 ### 2. Push to GitHub
 
