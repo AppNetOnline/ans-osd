@@ -329,13 +329,12 @@ try {
 `$InformationPreference   = 'Continue'
 `$ProgressPreference      = 'SilentlyContinue'
 
-Import-Module '$OSDModulePath' -Force
-`$Global:MyOSDCloud = Import-Clixml -Path '$MyOSDCloudPath'
-`$Params = Import-Clixml -Path '$ParamsPath'
-
 Start-Transcript -Path '$TranscriptPath' -Force | Out-Null
 
 Try {
+    Import-Module '$OSDModulePath' -Force -ErrorAction Stop
+    `$Global:MyOSDCloud = Import-Clixml -Path '$MyOSDCloudPath' -ErrorAction Stop
+    `$Params = Import-Clixml -Path '$ParamsPath' -ErrorAction Stop
     Start-OSDCloud @Params
 }
 Catch {
