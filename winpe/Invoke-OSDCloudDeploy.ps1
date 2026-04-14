@@ -387,8 +387,10 @@ Finally {
         -WindowStyle Hidden `
         -PassThru
 
-    $LastIndex       = 0
-    $LastDownloadPct = -1
+    $LastIndex          = 0
+    $LastDownloadPct    = -1
+    $DownloadTotalBytes = 0     # extracted from VERBOSE transcript lines
+    $DownloadDestPath   = ''    # extracted from VERBOSE transcript lines
 
     Function Read-NewTranscriptLines {
         If (-not (Test-Path $TranscriptPath)) { Return }
@@ -405,39 +407,69 @@ Finally {
             }
             If ($SkipLine)                       { Continue }
             Write-Raw $Line
-            If ($Trimmed -match '^VERBOSE:')     { Continue }
+            If ($Trimmed -match '^VERBOSE:') {
+                # Extract download metadata for file-size progress polling
+                If ($Trimmed -match '^VERBOSE: received (\d+)-byte response of content type application/octet-stream') {
+                    $sz = [long]$Matches[1]
+                    If ($sz -gt 1048576 -and $sz -gt $script:DownloadTotalBytes) {
+                        $script:DownloadTotalBytes = $sz
+                    }
+                }
+                ElseIf ($Trimmed -match '^VERBOSE: ImageFileDestination: (.+)') {
+                    $p = $Matches[1].Trim()
+                    If ($p -match '\.(esd|wim|swm)$') { $script:DownloadDestPath = $p }
+                }
+                Continue
+            }
             If ($Trimmed -match '^ERROR:')       { Enqueue $Line 'error'   }
             ElseIf ($Trimmed -match '^WARNING:') { Enqueue $Line 'warning' }
             Else                                 { Enqueue $Line           }
         };
     };
 
-    # ── Poll loop — BITS download progress + transcript tail ──────────────────
+    # ── Poll loop — download progress + transcript tail ───────────────────────
     While (-not $Process.HasExited) {
-        # BITS is not available in all WinPE environments — gate on service existence
-        $BitsJob = $null
-        If ((Get-Service -Name BITS -ErrorAction SilentlyContinue).Status -eq 'Running') {
+        # Download progress — file-size polling (works in WinPE without BITS).
+        # Falls back to BITS only if the service happens to be running.
+        $dlPct   = -1
+        $doneMB  = 0
+        $totalMB = 0
+
+        If ($script:DownloadDestPath -and $script:DownloadTotalBytes -gt 0) {
+            $fi = Get-Item -Path $script:DownloadDestPath -ErrorAction SilentlyContinue
+            If ($fi -and $fi.Length -gt 0) {
+                $dlPct   = [math]::Min(99, [math]::Floor($fi.Length / $script:DownloadTotalBytes * 100))
+                $doneMB  = [math]::Round($fi.Length / 1MB)
+                $totalMB = [math]::Round($script:DownloadTotalBytes / 1MB)
+                If ($fi.Length -ge $script:DownloadTotalBytes) {
+                    $dlPct = 100
+                    $script:DownloadDestPath = ''   # stop monitoring once complete
+                };
+            };
+        }
+        ElseIf ((Get-Service -Name BITS -ErrorAction SilentlyContinue).Status -eq 'Running') {
+            # Fallback: BITS (not available in most WinPE environments)
             try {
                 $BitsJob = Get-BitsTransfer -AllUsers -ErrorAction Stop |
                     Where-Object { $_.JobState -in 'Transferring', 'Queued', 'Connecting' } |
                     Select-Object -First 1
-            } catch { $BitsJob = $null }
+                If ($BitsJob -and $BitsJob.BytesTotal -gt 0) {
+                    $dlPct   = [math]::Floor($BitsJob.BytesTransferred / $BitsJob.BytesTotal * 100)
+                    $doneMB  = [math]::Round($BitsJob.BytesTransferred / 1MB)
+                    $totalMB = [math]::Round($BitsJob.BytesTotal / 1MB)
+                }
+            } catch {}
         }
 
-        If ($BitsJob -and $BitsJob.BytesTotal -gt 0) {
-            $dlPct = [math]::Floor($BitsJob.BytesTransferred / $BitsJob.BytesTotal * 100)
-            If ($dlPct -ne $LastDownloadPct) {
-                $LastDownloadPct = $dlPct
-                $doneMB  = [math]::Round($BitsJob.BytesTransferred / 1MB)
-                $totalMB = [math]::Round($BitsJob.BytesTotal / 1MB)
-                Enqueue "Downloading ESD: $dlPct%  ($doneMB MB / $totalMB MB)"
-                $mapped = 15 + [math]::Round($dlPct * 0.14)
-                $MessageQueue.Enqueue(@{
-                    Type    = 'progress'
-                    Percent = [int]$mapped
-                    Label   = "Downloading OS image... ($dlPct%)"
-                })
-            };
+        If ($dlPct -ge 0 -and $dlPct -ne $LastDownloadPct) {
+            $LastDownloadPct = $dlPct
+            Enqueue "Downloading ESD: $dlPct%  ($doneMB MB / $totalMB MB)"
+            $mapped = 15 + [math]::Round($dlPct * 0.14)
+            $MessageQueue.Enqueue(@{
+                Type    = 'progress'
+                Percent = [int]$mapped
+                Label   = "Downloading OS image... ($dlPct%)"
+            })
         };
 
         Read-NewTranscriptLines
