@@ -53,7 +53,7 @@ Function Initialize-Monitor {
         $modulePath = Join-Path $env:TEMP 'GitHubDB.psm1'
         $moduleContent = Invoke-RestMethod "$GithubBase/shared/GitHubDB.psm1" -UseBasicParsing -ErrorAction Stop
         Set-Content -Path $modulePath -Value $moduleContent -Encoding UTF8
-        Import-Module $modulePath -Force -Global -ErrorAction Stop
+        Import-Module $modulePath -Force -Global -WarningAction SilentlyContinue -ErrorAction Stop
 
         # Find secrets.json on the OSDCloud USB (searched across all drives)
         $secretsFile = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
@@ -203,7 +203,7 @@ try {
 
     If (-not (Get-Module -Name OSD -ErrorAction SilentlyContinue)) {
         Enqueue 'Loading OSD module...'
-        Import-Module OSD -ErrorAction Stop
+        Import-Module OSD -WarningAction SilentlyContinue -ErrorAction Stop
     };
     $osdVersion = (Get-Module OSD).Version.ToString()
     Enqueue "OSD module v$osdVersion loaded."
@@ -332,7 +332,7 @@ try {
 Start-Transcript -Path '$TranscriptPath' -Force | Out-Null
 
 Try {
-    Import-Module '$OSDModulePath' -Force -ErrorAction Stop
+    Import-Module '$OSDModulePath' -Force -WarningAction SilentlyContinue -ErrorAction Stop
     `$Global:MyOSDCloud = Import-Clixml -Path '$MyOSDCloudPath' -ErrorAction Stop
     `$Params = Import-Clixml -Path '$ParamsPath' -ErrorAction Stop
     Start-OSDCloud @Params
