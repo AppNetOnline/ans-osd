@@ -3,13 +3,14 @@
 .SYNOPSIS
     ANS OSDCloud Deployment Console — launcher
 .DESCRIPTION
-    Fetches the UI (XAML) and deployment logic from GitHub, then opens the
+    Fetches the UI layout (XAML) and deployment logic from GitHub, then opens the
     WPF monitor and runs Start-OSDCloud in a background runspace.
-    Edit $DeployConfig and $GithubRaw below; do not edit the other two files.
+    Only this file needs to be on the USB / baked into WinPE.
+    Edit $DeployConfig and $GithubRaw; do not edit the companion files directly here.
 .NOTES
     Author  : Appalachian Network Services — appnetonline.com
     Requires: OSD module, .NET Framework 4.8+
-    Companion files (host on GitHub):
+    Companion files (GitHub):
         OSDCloudGUI.xaml          — window layout
         Invoke-OSDCloudDeploy.ps1 — runspace deployment logic
 #>
@@ -21,30 +22,56 @@ $ErrorActionPreference = 'SilentlyContinue'
 #  DEPLOYMENT CONFIGURATION — edit these values before deploying
 # ─────────────────────────────────────────────────────────────────────────────
 $DeployConfig = @{
-    Restart               = [bool]$False
+    # ── Start-OSDCloud string parameters ─────────────────────────────────────
+    OSName        = ''       # Full name e.g. "Windows 11 23H2 x64" — blank to let OSDCloud prompt
+    OSEdition     = 'Pro'   # Home | Pro | Enterprise | Education
+    OSLanguage    = 'en-us'
+    OSActivation  = ''      # Retail | Volume — blank for default
+    Manufacturer  = ''      # e.g. 'Dell' — blank for auto-detect
+    Product       = ''      # e.g. 'Latitude 5540' — blank for auto-detect
+
+    # ── Start-OSDCloud switch parameters ─────────────────────────────────────
+    ZTI           = $True   # Zero Touch — suppresses all OSDCloud prompts
+    SkipAutopilot = $True   # Skip Autopilot hash collection
+    Restart       = $True   # Restart after deployment
+    Shutdown      = $False  # Shutdown after deployment
+    Firmware      = $False  # Apply firmware updates
+    Screenshot    = $False  # Capture screenshots during deployment
+    SkipODT       = $False  # Skip Office Deployment Tool
+    Preview       = $False  # Use preview/insider images
+
+    # ── $Global:MyOSDCloud behaviour keys (not passed to Start-OSDCloud) ─────
     RecoveryPartition     = [bool]$True
     OEMActivation         = [bool]$True
-    WindowsUpdate         = [bool]$False
+    WindowsUpdate         = [bool]$True
     WindowsUpdateDrivers  = [bool]$False
-    WindowsDefenderUpdate = [bool]$False
+    WindowsDefenderUpdate = [bool]$True
     SetTimeZone           = [bool]$False
     ClearDiskConfirm      = [bool]$False
     ShutdownSetupComplete = [bool]$False
     SyncMSUpCatDriverUSB  = [bool]$True
     CheckSHA1             = [bool]$True
-    OSVersion             = 11       # 10 or 11
-    OSEdition             = 'Pro'    # Home | Pro | Enterprise | Education
-    OSLanguage            = 'en-us'
-    OSArch                = 'x64'
-    ZTI                   = $True    # Zero Touch — suppresses all OSDCloud prompts
-    SkipAutoPilot         = $True
-    DriverPack            = $False   # $True for HP/Dell/Lenovo auto driver packs
-};
+}
+
+# Build $Global:MyOSDCloud so Start-OSDCloud (in child process) picks up these values
+$Global:MyOSDCloud = [ordered]@{
+    Restart               = [bool]$DeployConfig.Restart
+    RecoveryPartition     = [bool]$DeployConfig.RecoveryPartition
+    OEMActivation         = [bool]$DeployConfig.OEMActivation
+    WindowsUpdate         = [bool]$DeployConfig.WindowsUpdate
+    WindowsUpdateDrivers  = [bool]$DeployConfig.WindowsUpdateDrivers
+    WindowsDefenderUpdate = [bool]$DeployConfig.WindowsDefenderUpdate
+    SetTimeZone           = [bool]$DeployConfig.SetTimeZone
+    ClearDiskConfirm      = [bool]$DeployConfig.ClearDiskConfirm
+    ShutdownSetupComplete = [bool]$DeployConfig.ShutdownSetupComplete
+    SyncMSUpCatDriverUSB  = [bool]$DeployConfig.SyncMSUpCatDriverUSB
+    CheckSHA1             = [bool]$DeployConfig.CheckSHA1
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  GITHUB — base URL for companion files
 # ─────────────────────────────────────────────────────────────────────────────
-$GithubRaw = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/feature/split-gui/deploy'
+$GithubRaw = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/feature/split-gui/winpe'
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
@@ -55,11 +82,11 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  BOOTSTRAP — fetch XAML and runspace script from GitHub before showing UI
+#  BOOTSTRAP — fetch XAML and runspace script before showing the window
 # ─────────────────────────────────────────────────────────────────────────────
 try {
-    [xml]$XAML                      = Invoke-RestMethod "$GithubRaw/OSDCloudGUI.xaml"          -UseBasicParsing
-    $script:DeployScriptContent     = Invoke-RestMethod "$GithubRaw/Invoke-OSDCloudDeploy.ps1" -UseBasicParsing
+    [xml]$XAML                  = Invoke-RestMethod "$GithubRaw/OSDCloudGUI.xaml"          -UseBasicParsing
+    $script:DeployScriptContent = Invoke-RestMethod "$GithubRaw/Invoke-OSDCloudDeploy.ps1" -UseBasicParsing
 }
 catch {
     Write-Host "Bootstrap failed: $($_.Exception.Message)" -ForegroundColor Red
@@ -75,8 +102,8 @@ try {
     $Window = [System.Windows.Markup.XamlReader]::Load($reader)
 }
 catch {
-    Write-Host "XAML Error : $($_.Exception.Message)"               -ForegroundColor Red
-    Write-Host "Line       : $($_.Exception.LineNumber)"            -ForegroundColor Yellow
+    Write-Host "XAML Error : $($_.Exception.Message)"                -ForegroundColor Red
+    Write-Host "Line       : $($_.Exception.LineNumber)"             -ForegroundColor Yellow
     Write-Host "Inner      : $($_.Exception.InnerException.Message)" -ForegroundColor Magenta
     exit 1
 }
@@ -91,10 +118,20 @@ $TxtProgress    = Get-Control 'TxtProgress'
 $TxtPercent     = Get-Control 'TxtPercent'
 $ProgressFill   = Get-Control 'ProgressFill'
 $TxtClock       = Get-Control 'TxtClock'
+$BtnMinimize    = Get-Control 'BtnMinimize'
+
+# Fit window to working area (respects taskbar)
+$workArea       = [System.Windows.SystemParameters]::WorkArea
+$Window.Left    = $workArea.Left
+$Window.Top     = $workArea.Top
+$Window.Width   = $workArea.Width
+$Window.Height  = $workArea.Height
+
+$BtnMinimize.Add_Click({ $Window.WindowState = 'Minimized' })
 
 # Fix RichTextBox PageWidth — prevents single-character-per-line rendering in .NET Framework
-$RtbLog.Document.PageWidth        = 2000
-$RtbLog.Document.LineHeight       = [Double]::NaN
+$RtbLog.Document.PageWidth         = 2000
+$RtbLog.Document.LineHeight        = [Double]::NaN
 $RtbLog.HorizontalContentAlignment = 'Stretch'
 $Window.Add_SizeChanged({
     $RtbLog.Document.PageWidth = [Math]::Max($LogScroller.ActualWidth - 48, 400)
@@ -110,8 +147,6 @@ $script:ProgressMap = [ordered]@{
     'initializing'          = @(2,   'Initializing OSDCloud...')
     'starting osdcloud'     = @(5,   'Starting OSDCloud engine...')
     'windows image'         = @(8,   'Locating Windows image...')
-    'downloading'           = @(15,  'Downloading OS image...')
-    'esd'                   = @(22,  'Processing ESD file...')
     'formatting'            = @(30,  'Formatting target disk...')
     'applying image'        = @(45,  'Applying Windows image...')
     'expand-windowsimage'   = @(50,  'Expanding Windows image...')
@@ -119,13 +154,10 @@ $script:ProgressMap = [ordered]@{
     'installing drivers'    = @(65,  'Installing drivers...')
     'driver'                = @(68,  'Processing drivers...')
     'setting up windows'    = @(72,  'Configuring Windows...')
-    'oobe'                  = @(76,  'Setting up OOBE...')
-    'autopilot'             = @(79,  'Registering Autopilot...')
     'bitlocker'             = @(82,  'Configuring BitLocker...')
     'winre'                 = @(85,  'Rebuilding WinRE...')
     'finishing'             = @(90,  'Finishing deployment...')
-    'complete'              = @(100, 'Deployment complete!')
-    'restart'               = @(100, 'Complete — system restarting...')
+    'osdcloud finished'     = @(100, 'Deployment complete!')
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,7 +185,7 @@ Function Write-LogDivider {
 
 Function Set-Status {
     Param([string]$Label, [string]$DotColor, [string]$TextColor)
-    $StatusDot.Fill          = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString($DotColor)
+    $StatusDot.Fill            = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString($DotColor)
     $TxtStatusLabel.Text       = $Label
     $TxtStatusLabel.Foreground = [System.Windows.Media.SolidColorBrush][System.Windows.Media.ColorConverter]::ConvertFromString($TextColor)
 }
@@ -184,18 +216,8 @@ Function Get-LineStyle {
 Function Get-ProgressHint {
     Param([string]$Line)
     $l = $Line.ToLower()
-
-    # Extract real download percentage from lines like "Downloading [####] 34%  234 MB/s"
-    If ($l -match 'download' -and $Line -match '(\d{1,3})\s*%') {
-        $dlPct   = [int]$Matches[1]
-        $overall = 15 + [int]($dlPct * 0.14)   # maps 0-100% download → 15-29% overall
-        Return @($overall, "Downloading OS image... ($dlPct%)")
-    }
-
     ForEach ($key in $script:ProgressMap.Keys) {
-        If ($l -match [regex]::Escape($key)) {
-            Return $script:ProgressMap[$key]
-        }
+        If ($l -match [regex]::Escape($key)) { Return $script:ProgressMap[$key] }
     }
     Return $Null
 }
@@ -219,6 +241,12 @@ $DispatchTimer.Add_Tick({
                 $hint = Get-ProgressHint $msg.Text
                 If ($hint) { Update-Progress $hint[0] $hint[1] }
             }
+            'warning' {
+                Write-LogLine "[$ts]  $($msg.Text)" '#C8820A' $False
+            }
+            'progress' {
+                Update-Progress $msg.Percent $msg.Label
+            }
             'error' {
                 Write-LogLine "[$ts]  ERROR: $($msg.Text)" '#E50019' $True
                 Set-Status 'Error' '#E50019' '#E50019'
@@ -236,19 +264,20 @@ $DispatchTimer.Add_Tick({
 $DispatchTimer.Start()
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  RUNSPACE — OSDCloud runs here; never blocks the UI thread
+#  RUNSPACE — deployment logic runs here; never blocks the UI thread
 # ─────────────────────────────────────────────────────────────────────────────
 Function Start-DeploymentRunspace {
     Param([hashtable]$Config)
 
     $script:IsDeploying = $True
 
-    $rs                  = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
-    $rs.ApartmentState   = 'STA'
-    $rs.ThreadOptions    = 'ReuseThread'
+    $rs                = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.ThreadOptions  = 'ReuseThread'
     $rs.Open()
     $rs.SessionStateProxy.SetVariable('Config',       $Config)
     $rs.SessionStateProxy.SetVariable('MessageQueue', $script:MessageQueue)
+    $rs.SessionStateProxy.SetVariable('MyOSDCloud',   $Global:MyOSDCloud)
 
     $ps          = [System.Management.Automation.PowerShell]::Create()
     $ps.Runspace = $rs

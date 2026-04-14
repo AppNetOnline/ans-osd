@@ -2,8 +2,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="ANS OSDCloud Deployment Console"
-    Height="700" Width="1080"
-    WindowStartupLocation="CenterScreen"
+    WindowStartupLocation="Manual"
     WindowStyle="None"
     AllowsTransparency="True"
     Background="Transparent"
@@ -77,13 +76,46 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <!-- Status -->
+                    <!-- Status + Minimize -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                         <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#333333" Margin="0,0,8,0"/>
                         <TextBlock x:Name="TxtStatusLabel"
                                    Text="Initializing"
                                    FontFamily="Cascadia Code, Consolas"
-                                   FontSize="12" Foreground="#555555"/>
+                                   FontSize="12" Foreground="#555555"
+                                   Margin="0,0,16,0"/>
+                        <Button x:Name="BtnMinimize"
+                                Content="&#x2212;"
+                                Width="26" Height="26"
+                                Cursor="Hand"
+                                ToolTip="Minimize"
+                                FontFamily="Segoe UI" FontSize="14"
+                                Foreground="#555555"
+                                Background="Transparent"
+                                BorderThickness="0">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd"
+                                                        Background="{TemplateBinding Background}"
+                                                        CornerRadius="4">
+                                                    <ContentPresenter HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#1E1E1E"/>
+                                                        <Setter Property="Foreground" Value="#C8C8C8"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -159,7 +191,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Appalachian Network Services  —  appnetonline.com"
+                    <TextBlock Text="Appalachian Network Services - appnetonline.com"
                                FontFamily="Cascadia Code, Consolas"
                                FontSize="10" Foreground="#2A2A2A"
                                VerticalAlignment="Center"/>
@@ -170,7 +202,7 @@
                                VerticalAlignment="Center" Margin="0,0,20,0"/>
                     <TextBlock x:Name="TxtVersion"
                                Grid.Column="2"
-                               Text="v2.0"
+                               Text="v2.1"
                                FontFamily="Cascadia Code, Consolas"
                                FontSize="10" Foreground="#2A2A2A"
                                VerticalAlignment="Center"/>

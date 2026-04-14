@@ -1,71 +1,122 @@
-# ANS OSDCloud Deployment
+# ANS OSDCloud
 
-Zero-touch Windows 11 deployment using OSDCloud with automated app installs,
-SentinelOne, ConnectWise Automate, OOBE suppression, and ANSAdmin local admin.
+Zero-infrastructure Windows imaging for Appalachian Network Services customers.
+
+Boot any machine from a USB drive and get a fully configured, company-ready Windows install — no SCCM, no MDT, no servers, no VPNs, no technician interaction required.
 
 ---
 
-## Project Structure
+## The Goal
+
+Most imaging solutions require on-prem infrastructure — deployment servers, PXE, SCCM, MDT, or a technician sitting at the machine walking through prompts.
+
+This project eliminates all of that. A customer receives a USB drive, boots it, and walks away. The machine images itself, installs company software, registers with RMM, and is desktop-ready without any infrastructure on the customer's end. Everything is hosted on GitHub and Microsoft's CDN. The only thing on the USB is a boot image and a `secrets.json` file with the customer's credentials.
+
+---
+
+## How It Works
+
+```
+USB boot
+  └── WinPE starts
+        └── startnet.cmd fetches Invoke-OSDCloudGUI.ps1 from GitHub
+              └── ANS deployment console opens (WPF GUI)
+                    └── Fetches OSDCloudGUI.xaml + Invoke-OSDCloudDeploy.ps1 from GitHub
+                          └── Runs Start-OSDCloud in background
+                                ├── Downloads Windows from Microsoft CDN
+                                ├── Formats disk, applies image
+                                ├── Installs drivers
+                                └── Copies SetupComplete scripts from USB
+
+First boot (SYSTEM, before OOBE)
+  └── SetupComplete.cmd runs Bootstrap.ps1 (from USB)
+        └── Fetches PostOS script from GitHub
+              ├── Creates ANSAdmin local admin
+              ├── Suppresses OOBE
+              ├── Installs Chocolatey + apps (from manifest.json)
+              ├── Installs SentinelOne
+              ├── Installs ConnectWise Automate
+              └── Deletes secrets.json from disk
+
+Auto-login as ANSAdmin → desktop ready
+```
+
+No servers. No VPN. No prompts. The machine calls home to GitHub for all logic and Microsoft's CDN for the OS — the same infrastructure that runs the internet.
+
+---
+
+## Repository Structure
 
 ```
 ans-osd/
-├── README.md
 │
-├── admin/                          ← Run on your admin workstation
-│   └── Build-ANSWorkspace.ps1      ← Builds template, workspace, WinPE, USB
+├── winpe/                          ← Runs during WinPE / imaging phase
+│   ├── Deploy-ANS.ps1              ← Terminal-mode entry point (no GUI)
+│   ├── Invoke-OSDCloudGUI.ps1     ← GUI-mode launcher — baked into WinPE, fetches companions
+│   ├── Invoke-OSDCloudDeploy.ps1  ← Deployment runspace logic, fetched by GUI at runtime
+│   └── OSDCloudGUI.xaml           ← WPF UI layout, fetched by GUI at runtime
 │
-├── deploy/                         ← Push these to your PUBLIC GitHub repo
-│   ├── Deploy-ANS.ps1              ← StartURL target baked into WinPE
-│   ├── PostOS-Choco.ps1            ← PostOS: Chocolatey method
-│   ├── PostOS-Direct.ps1           ← PostOS: Direct URL method
-│   └── manifest.json               ← App list for PostOS-Direct
+├── postos/                         ← Fetched by Bootstrap after first boot
+│   ├── PostOS-Choco.ps1           ← Chocolatey-based app install method
+│   ├── PostOS-Direct.ps1          ← Direct URL app install method
+│   ├── manifest.json              ← App list for PostOS-Direct
+│   └── Unattend.xml               ← Windows answer file (OOBE suppression)
 │
-└── usb/                            ← Copy these to USB after New-OSDCloudUSB
-    └── SetupComplete/              ← USB path: \OSDCloud\Config\Scripts\SetupComplete\
-        ├── SetupComplete.cmd       ← OSDCloud entry point (do not rename)
-        ├── Bootstrap.ps1           ← Downloads PostOS from GitHub, runs it
-        └── secrets.json            ← FILL IN before deploying — never commit this
+├── shared/                         ← Shared functions used by multiple scripts
+│   └── ans-osd-functions.ps1
+│
+├── admin/          [gitignored]    ← Run on your admin workstation to build USB media
+│   ├── Build-ANSWorkspace.ps1     ← Builds WinPE template, workspace, ISO, USB
+│   ├── Hyper-V.ps1                ← Test VM helper
+│   └── rebuild.ps1                ← Quick rebuild shortcut
+│
+└── usb/            [gitignored]    ← Copy to USB after New-OSDCloudUSB
+    └── SetupComplete/
+        ├── SetupComplete.cmd      ← OSDCloud entry point (do not rename)
+        ├── Bootstrap.ps1          ← Downloads PostOS from GitHub, runs it
+        └── secrets.json           ← FILL IN per customer — never commit this
 ```
 
----
-
-## Prerequisites (admin workstation)
-
-1. **Windows ADK**
-   `winget install Microsoft.WindowsADK`
-   Or: https://go.microsoft.com/fwlink/?linkid=2243390
-
-2. **WinPE Addon for ADK**
-   https://go.microsoft.com/fwlink/?linkid=2243391
-
-3. **OSD PowerShell Module** (Build-ANSWorkspace.ps1 installs this automatically)
-   ```powershell
-   Install-Module OSD -Force
-   ```
+> `admin/` and `usb/` are gitignored. They exist locally on your admin workstation only.
+> `secrets.json` must never be committed under any circumstances.
 
 ---
 
-## Quick Start
+## Prerequisites
+
+Install these on your admin workstation before running `Build-ANSWorkspace.ps1`:
+
+| Tool | Install |
+|---|---|
+| Windows ADK | `winget install Microsoft.WindowsADK` |
+| WinPE Addon for ADK | [Download](https://go.microsoft.com/fwlink/?linkid=2243391) |
+| OSD PowerShell Module | `Install-Module OSD -Force` |
+
+---
+
+## Setup
 
 ### 1. Configure
 
-Edit the `# --- EDIT THESE ---` sections in each file before use:
+Edit the `# --- EDIT THESE ---` sections in each file before first use:
 
 | File | What to edit |
 |---|---|
-| `admin/Build-ANSWorkspace.ps1` | `$DeployScriptURL`, `$TemplateName`, `$WorkspacePath`, `$CloudDrivers` |
-| `github/Deploy-ANS.ps1` | `$OSEdition`, `$OSActivation`, `$OSLanguage` if not Enterprise/Volume/en-us |
+| `winpe/Invoke-OSDCloudGUI.ps1` | `$DeployConfig` — OS version, edition, options |
+| `winpe/Deploy-ANS.ps1` | OS name, edition, language if using terminal mode |
+| `admin/Build-ANSWorkspace.ps1` | `$DeployScriptURL`, `$WorkspacePath`, `$CloudDrivers` |
 | `usb/SetupComplete/Bootstrap.ps1` | `$GitHubBaseURL`, `$PostOSMethod` |
-| `usb/SetupComplete/secrets.json` | All fields — real passwords and keys |
+| `usb/SetupComplete/secrets.json` | All fields — real passwords, S1 token, CWA key |
 
-### 2. Push GitHub files
+### 2. Push to GitHub
 
-Push everything in `github/` to your public repo:
+Push this repo to your public GitHub org. The USB boot process pulls scripts from:
 ```
-https://github.com/your-org/ans-osd/
+https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/winpe/
+https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/postos/
 ```
 
-### 3. Build the workspace and USB
+### 3. Build the USB
 
 ```powershell
 # Run as Administrator on your admin workstation
@@ -73,83 +124,79 @@ https://github.com/your-org/ans-osd/
 ```
 
 This runs in order:
-- `New-OSDCloudTemplate` (~10-15 min, once only)
-- `New-OSDCloudWorkspace`
-- `Edit-OSDCloudWinPE -StartURL` (bakes Deploy-ANS.ps1 into boot.wim)
-- Stages `SetupComplete.cmd` and `Bootstrap.ps1` into the workspace
-- `New-OSDCloudISO`
-- `New-OSDCloudUSB` (prompts for disk selection)
+1. `New-OSDCloudTemplate` — builds base WinPE image (~10-15 min, once only)
+2. `New-OSDCloudWorkspace` — copies template to your workspace
+3. `Edit-OSDCloudWinPE` — bakes `Invoke-OSDCloudGUI.ps1` URL into `startnet.cmd`
+4. Stages `SetupComplete.cmd` and `Bootstrap.ps1` into workspace
+5. `New-OSDCloudISO` — builds bootable ISO
+6. `New-OSDCloudUSB` — writes ISO to USB (prompts for disk selection)
+
+Use `-SkipTemplate` and `-SkipWorkspace` on subsequent runs to skip already-built steps.
 
 ### 4. Place secrets on the USB
 
-After USB creation, copy your filled-in `secrets.json` to:
+After USB creation, copy your customer-specific `secrets.json` to:
 ```
 USB:\OSDCloud\Config\Scripts\SetupComplete\secrets.json
 ```
 
-### 5. Deploy
+This file is never on GitHub. Each USB gets its own copy per customer.
 
-Boot target machine from USB. Everything runs automatically.
+### 5. Image a machine
 
----
-
-## Deployment Flow
-
-```
-WinPE boot
-  → Deploy-ANS.ps1 (GitHub, via startnet.cmd)
-      → $Global:MyOSDCloud vars set
-      → Start-OSDCloud (applies OS, drivers, copies SetupComplete\ from USB)
-
-First boot — SetupComplete (SYSTEM, before OOBE)
-  → Bootstrap.ps1
-      → Downloads PostOS-Choco.ps1 (or Direct) from GitHub
-      → Runs it with secrets.json path
-
-PostOS script
-  → Loads secrets.json → SecretStore vault
-  → Creates ANSAdmin (local administrator)
-  → Configures single-use auto-logon
-  → Writes Unattend.xml (suppresses OOBE)
-  → Installs Chocolatey + apps
-  → Installs SentinelOne
-  → Installs ConnectWise Automate
-  → Deletes secrets.json from disk, purges vault
-
-OOBE suppressed → auto-logs in as ANSAdmin → desktop ready
-```
+Hand the USB to a customer or technician:
+1. Boot target machine from USB
+2. Walk away — everything runs automatically
+3. Machine reboots to a configured Windows desktop
 
 ---
 
-## Updating
+## Updating Without Rebuilding USB
+
+Because the imaging logic lives on GitHub, most updates don't require a new USB:
 
 | What changed | Action |
 |---|---|
-| PostOS logic or app list | Push to GitHub — next deploy picks it up |
+| OS version or deployment options | Edit `winpe/Invoke-OSDCloudGUI.ps1`, push to GitHub |
+| PostOS logic or app list | Edit `postos/` scripts, push to GitHub |
 | Secrets (password, S1 token, CWA key) | Edit `secrets.json` on each USB |
-| Switch Choco ↔ Direct method | Change `$PostOSMethod` in `Bootstrap.ps1` on USB |
-| WinPE (add drivers, change URL) | `Build-ANSWorkspace.ps1 -SkipTemplate -SkipWorkspace` |
-| New USB from existing workspace | `Update-OSDCloudUSB` |
-| OS version | Update `$OSReleaseID` / `$OSName` in `Deploy-ANS.ps1` on GitHub |
+| Switch Choco ↔ Direct app method | Change `$PostOSMethod` in `Bootstrap.ps1` on USB |
+| WinPE itself (new drivers, new URL) | Run `Build-ANSWorkspace.ps1 -SkipTemplate -SkipWorkspace` |
 
 ---
 
-## Logs (on deployed machine)
+## Branching Strategy
 
+`main` is the live production branch — changes here affect all USBs immediately on next boot.
+
+For testing changes before they hit production:
+```bash
+git checkout -b feature/my-change
+# push branch, update $GithubRaw in Invoke-OSDCloudGUI.ps1 to point to branch
+# test on a machine, then PR back to main
 ```
-C:\OSDCloud\Logs\
-├── Bootstrap.log
-├── PostOS-Choco.log        (or PostOS-Direct.log)
-├── SentinelOne.log
-├── CWA.log
-└── SetupComplete.log       (OSDCloud Windows Update log)
-```
+
+When merged to `main`, the branch URL in `Invoke-OSDCloudGUI.ps1` goes back to `main`.
 
 ---
 
-## Security Notes
+## Logs
 
-- `secrets.json` must **never** be committed to any repository
+Logs written to the deployed machine at `C:\OSDCloud\Logs\`:
+
+| File | Contents |
+|---|---|
+| `Bootstrap.log` | SetupComplete bootstrap output |
+| `PostOS-Choco.log` / `PostOS-Direct.log` | App install output |
+| `SentinelOne.log` | S1 agent install |
+| `CWA.log` | ConnectWise Automate install |
+| `ANS-OSDCloud-*.log` | Raw WinPE deployment output |
+
+---
+
+## Security
+
+- `secrets.json` is **never committed** — it is deleted from the deployed machine after PostOS runs
 - The GitHub repo is fully public — it contains zero credentials
-- `secrets.json` is deleted from the deployed machine after PostOS runs
-- `ANSAdmin` auto-logon fires once only (`AutoLogonCount = 1`), then Windows clears the password from registry automatically
+- `ANSAdmin` auto-logon fires exactly once (`AutoLogonCount = 1`), then Windows clears the password from registry automatically
+- All scripts pull from a specific branch/commit — pin to a tag for production deployments if needed

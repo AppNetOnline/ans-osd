@@ -19,7 +19,7 @@
 Function Enqueue {
     Param([string]$Text, [string]$Type = 'line')
     $MessageQueue.Enqueue(@{ Type = $Type; Text = $Text })
-}
+};
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  DEPLOYMENT
@@ -117,7 +117,7 @@ try {
         OSEdition  = $Config.OSEdition
         OSLanguage = $Config.OSLanguage
         OSArch     = $Config.OSArch
-    }
+    };
 
     $OptionalKeys = @(
         'ZTI', 'SkipAutoPilot', 'Restart', 'RecoveryPartition', 'OEMActivation',
@@ -129,8 +129,8 @@ try {
     ForEach ($Key in $OptionalKeys) {
         If ($Config.ContainsKey($Key)) {
             $Params[$Key] = [bool]$Config[$Key]
-        }
-    }
+        };
+    };
 
     If ($Config.DriverPack) { $Params['DriverPack'] = $True }
 

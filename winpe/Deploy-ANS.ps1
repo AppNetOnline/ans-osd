@@ -1,9 +1,9 @@
 #to Run, boot OSDCloudUSB, at the PS Prompt:
-#   iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/Deploy-ANS.ps1')
+#   iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/winpe/Deploy-ANS.ps1')
 #
 # Or via startnet.cmd (set by Build-ANSWorkspace.ps1):
 #   start /wait PowerShell -NoL -C Set-ExecutionPolicy RemoteSigned -Force
-#   start /wait PowerShell -NoL -C "iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/deploy/Deploy-ANS.ps1')"
+#   start /wait PowerShell -NoL -C "iex (irm 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/winpe/Deploy-ANS.ps1')"
 
 #region Initialization
 
