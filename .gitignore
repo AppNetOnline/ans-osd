@@ -12,6 +12,8 @@ Config/
 archive/
 Media/
 OSDCloud/
+_OSDCloud/
+_Config/
 admin/
 usb/
 Mount/
