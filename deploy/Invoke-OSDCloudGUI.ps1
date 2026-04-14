@@ -39,12 +39,12 @@ $DeployConfig = @{
     ZTI                   = $True    # Zero Touch — suppresses all OSDCloud prompts
     SkipAutoPilot         = $True
     DriverPack            = $False   # $True for HP/Dell/Lenovo auto driver packs
-}
+};
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  GITHUB — base URL for companion files
 # ─────────────────────────────────────────────────────────────────────────────
-$GithubRaw = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/main/deploy'
+$GithubRaw = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/feature/split-gui/deploy'
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
