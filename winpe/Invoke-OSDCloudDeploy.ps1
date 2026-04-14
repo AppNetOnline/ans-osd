@@ -28,12 +28,12 @@ $RawLog.AutoFlush = $True
 Function Enqueue {
     Param([string]$Text, [string]$Type = 'line')
     $MessageQueue.Enqueue(@{ Type = $Type; Text = $Text })
-}
+};
 
 Function Write-Raw {
     Param([string]$Text)
     $RawLog.WriteLine("$(Get-Date -Format 'HH:mm:ss.fff')  $Text")
-}
+};
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  MONITORING HELPERS
@@ -61,10 +61,10 @@ Function Initialize-Monitor {
             Where-Object   { Test-Path $_ -ErrorAction SilentlyContinue } |
             Select-Object  -First 1
 
-        if (-not $secretsFile) {
+        If (-not $secretsFile) {
             Enqueue 'Monitoring: secrets.json not found on USB — skipping'
             Return $false
-        }
+        };
 
         $sec = Get-Content $secretsFile -Raw | ConvertFrom-Json
         if (-not $sec.GitHubDBToken) {
@@ -78,14 +78,14 @@ Function Initialize-Monitor {
             Path   = 'data/deployments.json'
             Token  = $sec.GitHubDBToken
             Branch = 'main'
-        }
+        };
         Return $true
     }
     catch {
         Enqueue "Monitoring: init failed ($($_.Exception.Message)) — skipping"
         Return $false
     }
-}
+};
 
 Function Get-HardwareInfo {
     <# Collects hardware details via CIM — best-effort, partial data is acceptable. #>
@@ -118,7 +118,7 @@ Function Get-HardwareInfo {
     }
     catch { <# best-effort — return whatever was collected #> }
     Return $hw
-}
+};
 
 Function Get-GeoInfo {
     <# Gets public IP and approximate location from ip-api.com (free, no key). #>
@@ -131,14 +131,14 @@ Function Get-GeoInfo {
             Region   = $geo.regionName
             Country  = $geo.country
             Timezone = $geo.timezone
-        }
+        };
     }
     catch { Return @{} }
-}
+};
 
 Function New-DeployRecord {
     Param([hashtable]$HW, [hashtable]$Geo, [string]$OSTarget, [string]$OSDVersion)
-    if (-not $script:DBConn) { Return }
+    If (-not $script:DBConn) { Return }
     try {
         $row = @{
             Status          = 'Running'
@@ -148,34 +148,34 @@ Function New-DeployRecord {
             ErrorMessage    = $null
             OSTarget        = $OSTarget
             OSDCloudVersion = $OSDVersion
-        }
-        foreach ($k in $HW.Keys) { $row[$k] = $HW[$k] }
-        foreach ($k in $Geo.Keys) { $row[$k] = $Geo[$k] }
+        };
+        ForEach ($k in $HW.Keys) { $row[$k] = $HW[$k] };
+        ForEach ($k in $Geo.Keys) { $row[$k] = $Geo[$k] };
 
         $added           = Add-GHDBRow -Connection $script:DBConn -Row $row
         $script:DBRowId  = $added.id
         Enqueue "Monitoring: record created (id=$($script:DBRowId))"
     }
     catch { Enqueue "Monitoring: failed to create record ($($_.Exception.Message))" }
-}
+};
 
 Function Complete-DeployRecord {
-    if (-not $script:DBConn -or -not $script:DBRowId) { Return }
+    If (-not $script:DBConn -or -not $script:DBRowId) { Return }
     try {
         $end = Get-Date
         Update-GHDBRow -Connection $script:DBConn -Id $script:DBRowId -Updates @{
             Status          = 'Complete'
             EndTime         = $end.ToString('o')
             DurationMinutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
-        }
+        };
         Enqueue 'Monitoring: record updated (Complete)'
     }
     catch { Enqueue "Monitoring: failed to update record ($($_.Exception.Message))" }
-}
+};
 
 Function Fail-DeployRecord {
     Param([string]$ErrorMessage)
-    if (-not $script:DBConn -or -not $script:DBRowId) { Return }
+    If (-not $script:DBConn -or -not $script:DBRowId) { Return };
     try {
         $end = Get-Date
         Update-GHDBRow -Connection $script:DBConn -Id $script:DBRowId -Updates @{
@@ -183,10 +183,10 @@ Function Fail-DeployRecord {
             EndTime         = $end.ToString('o')
             DurationMinutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
             ErrorMessage    = $ErrorMessage
-        }
+        };
     }
     catch { <# swallow — must not mask the original error #> }
-}
+};
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  MAIN
@@ -204,7 +204,7 @@ try {
     If (-not (Get-Module -Name OSD -ErrorAction SilentlyContinue)) {
         Enqueue 'Loading OSD module...'
         Import-Module OSD -ErrorAction Stop
-    }
+    };
     $osdVersion = (Get-Module OSD).Version.ToString()
     Enqueue "OSD module v$osdVersion loaded."
     Enqueue "Raw log : $RawLogPath"
@@ -229,7 +229,7 @@ try {
     If ($DriverPack) {
         $Global:MyOSDCloud.DriverPackName = $DriverPack.Name
         Enqueue "Driver pack : $($DriverPack.Name)"
-    }
+    };
 
     # HP-specific BIOS / HPIA
     If (Test-HPIASupport) {
@@ -244,7 +244,7 @@ try {
             Manage-HPBiosSettings -SetSettings
         }
         catch { Enqueue "WARNING: HP BIOS settings script failed: $($_.Exception.Message)" }
-    }
+    };
 
     # Lenovo-specific BIOS
     If ($HWMfr -match 'Lenovo') {
@@ -254,7 +254,7 @@ try {
             Manage-LenovoBIOSSettings -SetSettings
         }
         catch { Enqueue "WARNING: Lenovo BIOS settings script failed: $($_.Exception.Message)" }
-    }
+    };
 
     Enqueue ''
     $targetLabel = If ($Config.OSName) { $Config.OSName } Else { "Windows $($Config.OSEdition) $($Config.OSLanguage)" }
@@ -265,7 +265,7 @@ try {
     # ── Create deployment record ──────────────────────────────────────────────
     If ($monitorActive) {
         New-DeployRecord -HW $HW -Geo $Geo -OSTarget $targetLabel -OSDVersion $osdVersion
-    }
+    };
 
     Enqueue 'Starting OSDCloud in Zero Touch mode...'
     Enqueue ''
@@ -305,11 +305,11 @@ try {
     # ── Build Start-OSDCloud params ───────────────────────────────────────────
     $Params = @{}
     ForEach ($key in @('OSName', 'OSEdition', 'OSLanguage', 'OSActivation', 'Manufacturer', 'Product')) {
-        If ($Config.ContainsKey($key) -and $Config[$key]) { $Params[$key] = $Config[$key] }
-    }
+        If ($Config.ContainsKey($key) -and $Config[$key]) { $Params[$key] = $Config[$key] };
+    };
     ForEach ($key in @('ZTI', 'SkipAutopilot', 'Restart', 'Shutdown', 'Firmware', 'Screenshot', 'SkipODT', 'Preview')) {
-        If ($Config.ContainsKey($key) -and [bool]$Config[$key]) { $Params[$key] = $True }
-    }
+        If ($Config.ContainsKey($key) -and [bool]$Config[$key]) { $Params[$key] = $True };
+    };
 
     # ── Write temp files for child process ───────────────────────────────────
     $TranscriptPath = Join-Path $env:TEMP "OSDCloud-Transcript-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
@@ -379,7 +379,7 @@ Finally {
         '^WSManStackVersion:'
         '^PSRemotingProtocolVersion:'
         '^SerializationVersion:'
-    )
+    );
 
     # ── Start child process ───────────────────────────────────────────────────
     $Process = Start-Process `
@@ -410,8 +410,8 @@ Finally {
             If ($Trimmed -match '^ERROR:')       { Enqueue $Line 'error'   }
             ElseIf ($Trimmed -match '^WARNING:') { Enqueue $Line 'warning' }
             Else                                 { Enqueue $Line           }
-        }
-    }
+        };
+    };
 
     # ── Poll loop — BITS download progress + transcript tail ──────────────────
     While (-not $Process.HasExited) {
@@ -432,12 +432,12 @@ Finally {
                     Percent = [int]$mapped
                     Label   = "Downloading OS image... ($dlPct%)"
                 })
-            }
-        }
+            };
+        };
 
         Read-NewTranscriptLines
         Start-Sleep -Milliseconds 500
-    }
+    };
 
     $Process.WaitForExit()
     Read-NewTranscriptLines
@@ -446,13 +446,13 @@ Finally {
 
     $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' })
 
-    If ($monitorActive) { Complete-DeployRecord }
+    If ($monitorActive) { Complete-DeployRecord };
 }
 catch {
     Write-Raw "EXCEPTION: $($_.Exception.Message)`n$($_.ScriptStackTrace)"
     $MessageQueue.Enqueue(@{ Type = 'error'; Text = $_.Exception.Message })
     $MessageQueue.Enqueue(@{ Type = 'line';  Text = $_.ScriptStackTrace })
-    If ($monitorActive) { Fail-DeployRecord -ErrorMessage $_.Exception.Message }
+    If ($monitorActive) { Fail-DeployRecord -ErrorMessage $_.Exception.Message };
 }
 finally {
     $RawLog.Close()

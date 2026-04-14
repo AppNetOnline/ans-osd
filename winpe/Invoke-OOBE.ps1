@@ -82,7 +82,7 @@ Write-Step "Creating Unattend.xml at $OutputPath"
 $secretsHashtable = @{
     AdministratorUser     = 'ANSAdmin'
     AdministratorPassword = $Secrets.ANSAdminPassword
-}
+};
 
 $Result = New-ConfiguredUnattendFile `
     -TemplateUrl $TemplateUrl `
