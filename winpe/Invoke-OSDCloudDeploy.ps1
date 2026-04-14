@@ -4,10 +4,11 @@
     ANS OSDCloud deployment runspace script.
 .DESCRIPTION
     Runs inside an isolated PowerShell runspace launched by Invoke-OSDCloudGUI.ps1.
-    Three variables are injected by the parent before this script runs:
+    Variables injected by the parent before this script runs:
         $Config       — hashtable of deployment options
         $MessageQueue — ConcurrentQueue[hashtable] shared with the UI thread
         $MyOSDCloud   — ordered hashtable used to seed $Global:MyOSDCloud
+        $GithubBase   — raw GitHub base URL (e.g. .../AppNetOnline/ans-osd/main)
     Do not run this script directly.
 .NOTES
     Author  : Appalachian Network Services — appnetonline.com
@@ -35,10 +36,165 @@ Function Write-Raw {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  MONITORING HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+$script:DBConn      = $null
+$script:DBRowId     = $null
+$script:StartTime   = Get-Date
+
+Function Initialize-Monitor {
+    <#
+    Loads GitHubDB from the shared/ folder, finds secrets.json on the USB,
+    and builds the DB connection. Returns $true if monitoring is ready.
+    All failures are non-fatal — deployment always continues.
+    #>
+    try {
+        # Fetch and import GitHubDB module from shared/
+        $modulePath = Join-Path $env:TEMP 'GitHubDB.psm1'
+        $moduleContent = Invoke-RestMethod "$GithubBase/shared/GitHubDB.psm1" -UseBasicParsing -ErrorAction Stop
+        Set-Content -Path $modulePath -Value $moduleContent -Encoding UTF8
+        Import-Module $modulePath -Force -Global -ErrorAction Stop
+
+        # Find secrets.json on the OSDCloud USB (searched across all drives)
+        $secretsFile = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.Root 'OSDCloud\Config\Scripts\SetupComplete\secrets.json' } |
+            Where-Object   { Test-Path $_ -ErrorAction SilentlyContinue } |
+            Select-Object  -First 1
+
+        if (-not $secretsFile) {
+            Enqueue 'Monitoring: secrets.json not found on USB — skipping'
+            Return $false
+        }
+
+        $sec = Get-Content $secretsFile -Raw | ConvertFrom-Json
+        if (-not $sec.GitHubDBToken) {
+            Enqueue 'Monitoring: GitHubDBToken missing from secrets.json — skipping'
+            Return $false
+        }
+
+        $script:DBConn = @{
+            Owner  = 'AppNetOnline'
+            Repo   = 'deployment-db'
+            Path   = 'data/deployments.json'
+            Token  = $sec.GitHubDBToken
+            Branch = 'main'
+        }
+        Return $true
+    }
+    catch {
+        Enqueue "Monitoring: init failed ($($_.Exception.Message)) — skipping"
+        Return $false
+    }
+}
+
+Function Get-HardwareInfo {
+    <# Collects hardware details via CIM — best-effort, partial data is acceptable. #>
+    $hw = @{}
+    try {
+        $cs   = Get-CimInstance Win32_ComputerSystem        -ErrorAction SilentlyContinue
+        $bios = Get-CimInstance Win32_BIOS                  -ErrorAction SilentlyContinue
+        $cpu  = Get-CimInstance Win32_Processor             -ErrorAction SilentlyContinue | Select-Object -First 1
+        $disk = Get-CimInstance Win32_DiskDrive             -ErrorAction SilentlyContinue | Sort-Object Size -Descending | Select-Object -First 1
+        $prod = Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue
+        $macs = Get-CimInstance Win32_NetworkAdapter        -ErrorAction SilentlyContinue |
+                    Where-Object { $_.MACAddress -and $_.PhysicalAdapter } |
+                    ForEach-Object { $_.MACAddress } |
+                    Select-Object -First 3
+
+        $hw.Hostname        = $env:COMPUTERNAME
+        $hw.Manufacturer    = $cs.Manufacturer
+        $hw.Model           = $cs.Model
+        $hw.SerialNumber    = $bios.SerialNumber
+        $hw.UUID            = $prod.UUID
+        $hw.CPU             = $cpu.Name.Trim()
+        $hw.CPUCores        = [int]$cpu.NumberOfCores
+        $hw.CPULogicalProcs = [int]$cpu.NumberOfLogicalProcessors
+        $hw.CPUSpeedMHz     = [int]$cpu.MaxClockSpeed
+        $hw.RAMGb           = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+        $hw.DiskGB          = if ($disk.Size) { [math]::Round($disk.Size / 1GB) } else { $null }
+        $hw.BIOSVersion     = $bios.SMBIOSBIOSVersion
+        $hw.BIOSDate        = if ($bios.ReleaseDate) { $bios.ReleaseDate.ToString('yyyy-MM-dd') } else { $null }
+        $hw.MACAddresses    = ($macs -join ', ')
+    }
+    catch { <# best-effort — return whatever was collected #> }
+    Return $hw
+}
+
+Function Get-GeoInfo {
+    <# Gets public IP and approximate location from ip-api.com (free, no key). #>
+    try {
+        $geo = Invoke-RestMethod 'http://ip-api.com/json' -UseBasicParsing -ErrorAction Stop
+        Return @{
+            PublicIP = $geo.query
+            ISP      = $geo.isp
+            City     = $geo.city
+            Region   = $geo.regionName
+            Country  = $geo.country
+            Timezone = $geo.timezone
+        }
+    }
+    catch { Return @{} }
+}
+
+Function New-DeployRecord {
+    Param([hashtable]$HW, [hashtable]$Geo, [string]$OSTarget, [string]$OSDVersion)
+    if (-not $script:DBConn) { Return }
+    try {
+        $row = @{
+            Status          = 'Running'
+            StartTime       = $script:StartTime.ToString('o')
+            EndTime         = $null
+            DurationMinutes = $null
+            ErrorMessage    = $null
+            OSTarget        = $OSTarget
+            OSDCloudVersion = $OSDVersion
+        }
+        foreach ($k in $HW.Keys) { $row[$k] = $HW[$k] }
+        foreach ($k in $Geo.Keys) { $row[$k] = $Geo[$k] }
+
+        $added           = Add-GHDBRow -Connection $script:DBConn -Row $row
+        $script:DBRowId  = $added.id
+        Enqueue "Monitoring: record created (id=$($script:DBRowId))"
+    }
+    catch { Enqueue "Monitoring: failed to create record ($($_.Exception.Message))" }
+}
+
+Function Complete-DeployRecord {
+    if (-not $script:DBConn -or -not $script:DBRowId) { Return }
+    try {
+        $end = Get-Date
+        Update-GHDBRow -Connection $script:DBConn -Id $script:DBRowId -Updates @{
+            Status          = 'Complete'
+            EndTime         = $end.ToString('o')
+            DurationMinutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
+        }
+        Enqueue 'Monitoring: record updated (Complete)'
+    }
+    catch { Enqueue "Monitoring: failed to update record ($($_.Exception.Message))" }
+}
+
+Function Fail-DeployRecord {
+    Param([string]$ErrorMessage)
+    if (-not $script:DBConn -or -not $script:DBRowId) { Return }
+    try {
+        $end = Get-Date
+        Update-GHDBRow -Connection $script:DBConn -Id $script:DBRowId -Updates @{
+            Status          = 'Error'
+            EndTime         = $end.ToString('o')
+            DurationMinutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
+            ErrorMessage    = $ErrorMessage
+        }
+    }
+    catch { <# swallow — must not mask the original error #> }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────────────────────────────────────
-# Restore $Global:MyOSDCloud so Start-OSDCloud (in child process) can read it
 $Global:MyOSDCloud = $MyOSDCloud
+
+# Initialize monitoring before anything else so we capture the full duration
+$monitorActive = Initialize-Monitor
 
 try {
     Enqueue 'ANS OSDCloud Deployment Console'
@@ -49,14 +205,23 @@ try {
         Enqueue 'Loading OSD module...'
         Import-Module OSD -ErrorAction Stop
     }
-    Enqueue "OSD module v$((Get-Module OSD).Version) loaded."
+    $osdVersion = (Get-Module OSD).Version.ToString()
+    Enqueue "OSD module v$osdVersion loaded."
     Enqueue "Raw log : $RawLogPath"
     Enqueue ''
 
     # ── Hardware detection ────────────────────────────────────────────────────
-    $HWProduct      = Get-MyComputerProduct
-    $HWModel        = Get-MyComputerModel
-    $HWManufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
+    $HW          = Get-HardwareInfo
+    $Geo         = Get-GeoInfo
+    $HWProduct   = Get-MyComputerProduct
+    $HWModel     = Get-MyComputerModel
+    $HWMfr       = $HW.Manufacturer
+
+    Enqueue "Hardware : $($HW.Manufacturer) $($HW.Model) — S/N $($HW.SerialNumber)"
+    Enqueue "CPU      : $($HW.CPU) ($($HW.CPUCores)C/$($HW.CPULogicalProcs)T)"
+    Enqueue "RAM      : $($HW.RAMGb) GB    Disk: $($HW.DiskGB) GB"
+    Enqueue "Location : $($Geo.City), $($Geo.Region) ($($Geo.PublicIP))"
+    Enqueue ''
 
     # Auto driver pack
     $OSVerLabel = If ($Config.OSName -match 'Windows\s+\d+') { $Matches[0] } Else { 'Windows 11' }
@@ -66,7 +231,7 @@ try {
         Enqueue "Driver pack : $($DriverPack.Name)"
     }
 
-    # HP-specific BIOS / HPIA settings
+    # HP-specific BIOS / HPIA
     If (Test-HPIASupport) {
         Enqueue 'HP device detected — enabling HPIA / BIOS / TPM updates'
         $Global:MyOSDCloud.HPTPMUpdate  = [bool]$True
@@ -81,8 +246,8 @@ try {
         catch { Enqueue "WARNING: HP BIOS settings script failed: $($_.Exception.Message)" }
     }
 
-    # Lenovo-specific BIOS settings
-    If ($HWManufacturer -match 'Lenovo') {
+    # Lenovo-specific BIOS
+    If ($HWMfr -match 'Lenovo') {
         Enqueue 'Lenovo device detected — applying BIOS settings'
         try {
             Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/gwblok/garytown/master/OSD/CloudOSD/Manage-LenovoBiosSettings.ps1')
@@ -92,54 +257,45 @@ try {
     }
 
     Enqueue ''
-    $targetLabel = If ($Config.OSName) { $Config.OSName } Else { "$($Config.OSEdition) (OSDCloud auto-select)" }
+    $targetLabel = If ($Config.OSName) { $Config.OSName } Else { "Windows $($Config.OSEdition) $($Config.OSLanguage)" }
     Enqueue "Target  : $targetLabel"
-    Enqueue "Language: $($Config.OSLanguage)"
     Enqueue "ZTI     : $($Config.ZTI)"
     Enqueue ''
+
+    # ── Create deployment record ──────────────────────────────────────────────
+    If ($monitorActive) {
+        New-DeployRecord -HW $HW -Geo $Geo -OSTarget $targetLabel -OSDVersion $osdVersion
+    }
+
     Enqueue 'Starting OSDCloud in Zero Touch mode...'
     Enqueue ''
 
     <#
     # ══════════════════════════════════════════════════════════════════════════
     #  SAFE TEST MODE — uncomment this block and comment out REAL OSDCLOUD
-    #  below to simulate a deployment without touching any disks.
     # ══════════════════════════════════════════════════════════════════════════
     $fakeLines = @(
-        @{ Text = 'Initializing OSDCloud environment...';              Delay = 800  }
-        @{ Text = 'Starting OSDCloud deployment...';                   Delay = 600  }
-        @{ Text = '[OSDCloud] Checking prerequisites...';              Delay = 1200 }
-        @{ Text = '[OSDCloud] Locating Windows image source...';       Delay = 900  }
-        @{ Text = 'Download Operating System — fetching ESD...';       Delay = 700  }
-        @{ Text = '';                                                   Delay = 200  }
-        @{ Text = '[OSDCloud] Formatting target disk...';              Delay = 1200 }
-        @{ Text = 'Disk formatted successfully.';                       Delay = 500  }
-        @{ Text = '';                                                   Delay = 200  }
-        @{ Text = '[OSDCloud] Applying image to disk...';              Delay = 1000 }
-        @{ Text = 'Expand-WindowsImage — applying ESD to W:\...';      Delay = 700  }
-        @{ Text = 'Windows image applied successfully.';               Delay = 700  }
-        @{ Text = '';                                                   Delay = 200  }
-        @{ Text = '[OSDCloud] Installing drivers...';                  Delay = 1000 }
-        @{ Text = 'WARNING: Driver package not signed — skipping Intel.Bluetooth'; Delay = 600 }
-        @{ Text = '';                                                   Delay = 200  }
-        @{ Text = '[OSDCloud] Setting up Windows...';                  Delay = 1000 }
-        @{ Text = 'Rebuilding WinRE image...';                         Delay = 800  }
-        @{ Text = '';                                                   Delay = 200  }
-        @{ Text = 'OSDCloud Finished';                                 Delay = 600  }
+        @{ Text = 'Initializing OSDCloud environment...';            Delay = 800  }
+        @{ Text = 'Starting OSDCloud deployment...';                 Delay = 600  }
+        @{ Text = '[OSDCloud] Checking prerequisites...';            Delay = 1200 }
+        @{ Text = '[OSDCloud] Locating Windows image source...';     Delay = 900  }
+        @{ Text = 'Download Operating System — fetching ESD...';     Delay = 700  }
+        @{ Text = '';                                                 Delay = 200  }
+        @{ Text = '[OSDCloud] Formatting target disk...';            Delay = 1200 }
+        @{ Text = 'Disk formatted successfully.';                     Delay = 500  }
+        @{ Text = '[OSDCloud] Applying image to disk...';            Delay = 1000 }
+        @{ Text = 'Windows image applied successfully.';             Delay = 700  }
+        @{ Text = '[OSDCloud] Installing drivers...';                Delay = 1000 }
+        @{ Text = '[OSDCloud] Setting up Windows...';                Delay = 1000 }
+        @{ Text = 'OSDCloud Finished';                               Delay = 600  }
     )
     ForEach ($entry in $fakeLines) {
-        If ($entry.Text -ne '') { Enqueue $entry.Text }
+        If ($entry.Text) { Enqueue $entry.Text }
         Start-Sleep -Milliseconds $entry.Delay
     }
-
-    # Simulate BITS download progress separately
-    For ($i = 0; $i -le 100; $i += 5) {
-        $mapped = 15 + [math]::Round($i * 0.14)
-        $MessageQueue.Enqueue(@{ Type = 'progress'; Percent = [int]$mapped; Label = "Downloading OS image... ($i%)" })
-        Start-Sleep -Milliseconds 300
-    }
-
     $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' })
+    If ($monitorActive) { Complete-DeployRecord }
+    Return
     #>
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -148,25 +304,21 @@ try {
 
     # ── Build Start-OSDCloud params ───────────────────────────────────────────
     $Params = @{}
-
-    # String params — only included when non-empty
     ForEach ($key in @('OSName', 'OSEdition', 'OSLanguage', 'OSActivation', 'Manufacturer', 'Product')) {
         If ($Config.ContainsKey($key) -and $Config[$key]) { $Params[$key] = $Config[$key] }
     }
-
-    # Switch params — only included when explicitly $True
     ForEach ($key in @('ZTI', 'SkipAutopilot', 'Restart', 'Shutdown', 'Firmware', 'Screenshot', 'SkipODT', 'Preview')) {
         If ($Config.ContainsKey($key) -and [bool]$Config[$key]) { $Params[$key] = $True }
     }
 
     # ── Write temp files for child process ───────────────────────────────────
-    $TranscriptPath  = Join-Path $env:TEMP "OSDCloud-Transcript-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-    $RunnerPath      = Join-Path $env:TEMP "Run-OSDCloud-$([guid]::NewGuid()).ps1"
-    $ParamsPath      = Join-Path $env:TEMP "OSDCloud-Params-$([guid]::NewGuid()).clixml"
-    $MyOSDCloudPath  = Join-Path $env:TEMP "OSDCloud-MyOSDCloud-$([guid]::NewGuid()).clixml"
+    $TranscriptPath = Join-Path $env:TEMP "OSDCloud-Transcript-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    $RunnerPath     = Join-Path $env:TEMP "Run-OSDCloud-$([guid]::NewGuid()).ps1"
+    $ParamsPath     = Join-Path $env:TEMP "OSDCloud-Params-$([guid]::NewGuid()).clixml"
+    $MyOSDCloudPath = Join-Path $env:TEMP "OSDCloud-MyOSDCloud-$([guid]::NewGuid()).clixml"
 
-    $Params              | Export-Clixml -Path $ParamsPath
-    $Global:MyOSDCloud   | Export-Clixml -Path $MyOSDCloudPath
+    $Params            | Export-Clixml -Path $ParamsPath
+    $Global:MyOSDCloud | Export-Clixml -Path $MyOSDCloudPath
 
     $OSDModulePath = (Get-Module OSD).Path
 
@@ -236,42 +388,33 @@ Finally {
         -WindowStyle Hidden `
         -PassThru
 
-    $LastIndex           = 0
-    $LastDownloadPct     = -1
+    $LastIndex       = 0
+    $LastDownloadPct = -1
 
     Function Read-NewTranscriptLines {
         If (-not (Test-Path $TranscriptPath)) { Return }
-
         $Lines = Get-Content -Path $TranscriptPath -ErrorAction SilentlyContinue
         If ($Lines.Count -le $script:LastIndex) { Return }
-
         $NewLines = $Lines[$script:LastIndex..($Lines.Count - 1)]
         $script:LastIndex = $Lines.Count
-
         ForEach ($Line in $NewLines) {
             If ([string]::IsNullOrWhiteSpace($Line)) { Continue }
-
             $Trimmed  = $Line.Trim()
             $SkipLine = $False
             ForEach ($Pattern in $NoisePatterns) {
                 If ($Trimmed -match $Pattern) { $SkipLine = $True; Break }
             }
-            If ($SkipLine)                           { Continue }
-
+            If ($SkipLine)                       { Continue }
             Write-Raw $Line
-
-            If ($Trimmed -match '^VERBOSE:')         { Continue }   # skip verbose from display
-
-            If ($Trimmed -match '^ERROR:')           { Enqueue $Line 'error' }
-            ElseIf ($Trimmed -match '^WARNING:')     { Enqueue $Line 'warning' }
-            Else                                     { Enqueue $Line }
+            If ($Trimmed -match '^VERBOSE:')     { Continue }
+            If ($Trimmed -match '^ERROR:')       { Enqueue $Line 'error'   }
+            ElseIf ($Trimmed -match '^WARNING:') { Enqueue $Line 'warning' }
+            Else                                 { Enqueue $Line           }
         }
     }
 
-    # ── Poll loop — tails transcript + monitors BITS download progress ────────
+    # ── Poll loop — BITS download progress + transcript tail ──────────────────
     While (-not $Process.HasExited) {
-        # BITS progress — OSDCloud uses Start-BitsTransfer for ESD download.
-        # BytesTotal/BytesTransferred are available system-wide; no pre-knowledge needed.
         $BitsJob = Get-BitsTransfer -AllUsers -ErrorAction SilentlyContinue |
             Where-Object { $_.JobState -in 'Transferring', 'Queued', 'Connecting' } |
             Select-Object -First 1
@@ -283,7 +426,6 @@ Finally {
                 $doneMB  = [math]::Round($BitsJob.BytesTransferred / 1MB)
                 $totalMB = [math]::Round($BitsJob.BytesTotal / 1MB)
                 Enqueue "Downloading ESD: $dlPct%  ($doneMB MB / $totalMB MB)"
-                # Map download 0-100% into overall bar range 15-29%
                 $mapped = 15 + [math]::Round($dlPct * 0.14)
                 $MessageQueue.Enqueue(@{
                     Type    = 'progress'
@@ -298,19 +440,19 @@ Finally {
     }
 
     $Process.WaitForExit()
-
-    # ── Drain any remaining transcript lines after process exits ──────────────
     Read-NewTranscriptLines
 
-    # ── Cleanup temp files ────────────────────────────────────────────────────
     Remove-Item -Path $RunnerPath, $ParamsPath, $MyOSDCloudPath -Force -ErrorAction SilentlyContinue
 
     $MessageQueue.Enqueue(@{ Type = 'complete'; Text = '' })
+
+    If ($monitorActive) { Complete-DeployRecord }
 }
 catch {
     Write-Raw "EXCEPTION: $($_.Exception.Message)`n$($_.ScriptStackTrace)"
     $MessageQueue.Enqueue(@{ Type = 'error'; Text = $_.Exception.Message })
     $MessageQueue.Enqueue(@{ Type = 'line';  Text = $_.ScriptStackTrace })
+    If ($monitorActive) { Fail-DeployRecord -ErrorMessage $_.Exception.Message }
 }
 finally {
     $RawLog.Close()

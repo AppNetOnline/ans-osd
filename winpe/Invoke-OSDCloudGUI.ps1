@@ -69,9 +69,10 @@ $Global:MyOSDCloud = [ordered]@{
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  GITHUB — base URL for companion files
+#  GITHUB — base URLs for companion files
 # ─────────────────────────────────────────────────────────────────────────────
-$GithubRaw = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/feature/split-gui/winpe'
+$GithubBase = 'https://raw.githubusercontent.com/AppNetOnline/ans-osd/feature/split-gui'
+$GithubRaw  = "$GithubBase/winpe"
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ASSEMBLIES
@@ -278,6 +279,7 @@ Function Start-DeploymentRunspace {
     $rs.SessionStateProxy.SetVariable('Config',       $Config)
     $rs.SessionStateProxy.SetVariable('MessageQueue', $script:MessageQueue)
     $rs.SessionStateProxy.SetVariable('MyOSDCloud',   $Global:MyOSDCloud)
+    $rs.SessionStateProxy.SetVariable('GithubBase',   $GithubBase)
 
     $ps          = [System.Management.Automation.PowerShell]::Create()
     $ps.Runspace = $rs
