@@ -20,8 +20,6 @@ $ChocoPackages = @(
     'notepadplusplus'
 );
 
-$TimeZone = 'Central Standard Time';
-
 #endregion
 
 #region --- Functions ---
