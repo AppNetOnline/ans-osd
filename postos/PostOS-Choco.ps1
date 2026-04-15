@@ -4,7 +4,7 @@
 Set-StrictMode -Version Latest;
 $ErrorActionPreference = 'Stop';
 
-[string]$SetupCompleteDir = $PSScriptRoot
+[string]$SetupCompleteDir = $(Get-Location).Path
 
 #region --- Variables ---
 
