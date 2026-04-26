@@ -70,7 +70,7 @@ Function Initialize-Monitor {
         If (-not $sec.SupabaseUrl -or -not $sec.SupabaseKey) {
             Enqueue 'Monitoring: SupabaseUrl / SupabaseKey missing from secrets.json — skipping'
             Return $false
-        }
+        };
 
         $script:DBConn = @{
             Url = $sec.SupabaseUrl.TrimEnd('/')
