@@ -44,14 +44,14 @@ $script:StartTime   = Get-Date
 
 Function Initialize-Monitor {
     <#
-    Loads GitHubDB from the shared/ folder, finds secrets.json on the USB,
+    Loads SupabaseDB from the shared/ folder, finds secrets.json on the USB,
     and builds the DB connection. Returns $true if monitoring is ready.
     All failures are non-fatal — deployment always continues.
     #>
     try {
-        # Fetch and import GitHubDB module from shared/
-        $modulePath = Join-Path $env:TEMP 'GitHubDB.psm1'
-        $moduleContent = Invoke-RestMethod "$GithubBase/shared/GitHubDB.psm1" -UseBasicParsing -ErrorAction Stop
+        # Fetch and import SupabaseDB module from shared/
+        $modulePath = Join-Path $env:TEMP 'SupabaseDB.psm1'
+        $moduleContent = Invoke-RestMethod "$GithubBase/shared/SupabaseDB.psm1" -UseBasicParsing -ErrorAction Stop
         Set-Content -Path $modulePath -Value $moduleContent -Encoding UTF8
         Import-Module $modulePath -Force -Global -WarningAction SilentlyContinue -ErrorAction Stop
 
@@ -67,17 +67,14 @@ Function Initialize-Monitor {
         };
 
         $sec = Get-Content $secretsFile -Raw | ConvertFrom-Json
-        if (-not $sec.GitHubDBToken) {
-            Enqueue 'Monitoring: GitHubDBToken missing from secrets.json — skipping'
+        If (-not $sec.SupabaseUrl -or -not $sec.SupabaseKey) {
+            Enqueue 'Monitoring: SupabaseUrl / SupabaseKey missing from secrets.json — skipping'
             Return $false
         }
 
         $script:DBConn = @{
-            Owner  = 'AppNetOnline'
-            Repo   = 'deployment-db'
-            Path   = 'data/deployments.json'
-            Token  = $sec.GitHubDBToken
-            Branch = 'main'
+            Url = $sec.SupabaseUrl.TrimEnd('/')
+            Key = $sec.SupabaseKey
         };
         Return $true
     }
@@ -141,19 +138,35 @@ Function New-DeployRecord {
     If (-not $script:DBConn) { Return }
     try {
         $row = @{
-            Status          = 'Running'
-            StartTime       = $script:StartTime.ToString('o')
-            EndTime         = $null
-            DurationMinutes = $null
-            ErrorMessage    = $null
-            OSTarget        = $OSTarget
-            OSDCloudVersion = $OSDVersion
+            status            = 'Running'
+            type              = 'OSDCloud'
+            started_at        = $script:StartTime.ToString('o')
+            os_target         = $OSTarget
+            osd_version       = $OSDVersion
+            hostname          = $HW.Hostname
+            manufacturer      = $HW.Manufacturer
+            model             = $HW.Model
+            serial_number     = $HW.SerialNumber
+            uuid              = $HW.UUID
+            cpu               = $HW.CPU
+            cpu_cores         = $HW.CPUCores
+            cpu_logical_procs = $HW.CPULogicalProcs
+            cpu_speed_mhz     = $HW.CPUSpeedMHz
+            ram_gb            = $HW.RAMGb
+            disk_gb           = $HW.DiskGB
+            bios_version      = $HW.BIOSVersion
+            bios_date         = $HW.BIOSDate
+            mac_addresses     = $HW.MACAddresses
+            public_ip         = $Geo.PublicIP
+            isp               = $Geo.ISP
+            city              = $Geo.City
+            region            = $Geo.Region
+            country           = $Geo.Country
+            timezone          = $Geo.Timezone
         };
-        ForEach ($k in $HW.Keys) { $row[$k] = $HW[$k] };
-        ForEach ($k in $Geo.Keys) { $row[$k] = $Geo[$k] };
 
-        $added           = Add-GHDBRow -Connection $script:DBConn -Row $row
-        $script:DBRowId  = $added.id
+        $added          = New-SupabaseRecord -Connection $script:DBConn -Row $row
+        $script:DBRowId = $added.id
         Enqueue "Monitoring: record created (id=$($script:DBRowId))"
     }
     catch { Enqueue "Monitoring: failed to create record ($($_.Exception.Message))" }
@@ -163,10 +176,10 @@ Function Complete-DeployRecord {
     If (-not $script:DBConn -or -not $script:DBRowId) { Return }
     try {
         $end = Get-Date
-        Update-GHDBRow -Connection $script:DBConn -Id $script:DBRowId -Updates @{
-            Status          = 'Complete'
-            EndTime         = $end.ToString('o')
-            DurationMinutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
+        Update-SupabaseRecord -Connection $script:DBConn -Id $script:DBRowId -Updates @{
+            status           = 'Complete'
+            ended_at         = $end.ToString('o')
+            duration_minutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
         };
         Enqueue 'Monitoring: record updated (Complete)'
     }
@@ -178,11 +191,11 @@ Function Fail-DeployRecord {
     If (-not $script:DBConn -or -not $script:DBRowId) { Return };
     try {
         $end = Get-Date
-        Update-GHDBRow -Connection $script:DBConn -Id $script:DBRowId -Updates @{
-            Status          = 'Error'
-            EndTime         = $end.ToString('o')
-            DurationMinutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
-            ErrorMessage    = $ErrorMessage
+        Update-SupabaseRecord -Connection $script:DBConn -Id $script:DBRowId -Updates @{
+            status           = 'Error'
+            ended_at         = $end.ToString('o')
+            duration_minutes = [math]::Round(($end - $script:StartTime).TotalMinutes, 1)
+            error_message    = $ErrorMessage
         };
     }
     catch { <# swallow — must not mask the original error #> }
