@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "Bash(git -C /f/ans-osd-ipu config user.name \"Jarod Roberts\")",
+      "Bash(git -C /f/ans-osd-ipu config user.email \"jarod.roberts@outlook.com\")",
+      "Bash(git -C /f/ans-osd-ipu status)",
+      "PowerShell(git config --global --add safe.directory F:/ans-osd-ipu)",
+      "PowerShell(git -C \"F:\\\\ans-osd-ipu\" config user.name \"Jarod Roberts\")",
+      "PowerShell(git -C \"F:\\\\ans-osd-ipu\" config user.email \"jarod.roberts@outlook.com\")",
+      "PowerShell(git -C \"F:\\\\ans-osd-ipu\" status)"
+    ]
+  }
+}
